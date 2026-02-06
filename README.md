@@ -12,7 +12,7 @@ ___
   <p align="center">
     A small tool that analyzes FLAC audio files to determine whether they are true lossless sources or upscaled from lower-quality formats.
     <br />
-    <a href="https://github.com/github_username/repo_name"><strong>Explore the docs »</strong></a>
+    <a href="https://github.com/Mandache-Eduard/flac-authenticator/blob/main/docs/OVERVIEW.md"><strong>Explore the docs »</strong></a>
     <br />
     <br />
     <a href="https://github.com/github_username/repo_name"><strong>View Demo (To be added)</a>
@@ -27,19 +27,10 @@ ___
 <details>
   <summary>Table of Contents</summary>
   <ol>
-    <li>
-      <a href="#about-the-project">About The Project</a>
-    </li>
-    <li>
-      <a href="#disclaimer">Disclaimer</a>
-    </li>
-    <li>
-      <a href="#getting-started">Getting Started</a>
-      <ul>
-        <li><a href="#prerequisites">Prerequisites</a></li>
-        <li><a href="#installation">Installation</a></li>
-      </ul>
-    </li>
+    <li><a href="#about-the-project">About The Project</a></li>
+    <li><a href="#disclaimer">Disclaimer</a></li>
+    <li><a href="#requirements">Requirements</a></li>
+    <li><a href="#installation">Installation</a></li>
     <li><a href="#usage">Usage</a></li>
     <li><a href="#roadmap">Roadmap</a></li>
     <ul>
@@ -68,17 +59,16 @@ This project is currently in **an early, experimental stage** and should be cons
 
 ___
 
-<!-- GETTING STARTED -->
+<!-- REQUIREMENTS -->
 ## Requirements
 
 Pyhton version: 3.14t (free-threaded)
-Python libraries: csv, os, sys, subprocess, shutil, numpy, soundfile, typing, tqdm, datetime
 External utilities: FFMPEG
 
 ___
 
 <!-- INSTALLATION -->
-### Installation
+## Installation
 
 1. Get a free API Key at [https://example.com](https://example.com)
 2. Clone the repo
@@ -113,6 +103,7 @@ ___
 ## Roadmap
 
 ### Future features
+- [ ] Expand the program to also scan MP3 and other file formats to detect upscaling/authenticiy.
 - [ ] Implement a local database, to avoid scanning already scanned files and only focus on files added since last scan
 - [ ] Implement different checks for .flac files (audio artifacts, checksums, etc.)
 - [ ] Add file recognition from MusicBrainz Picard Database/AcoustID!

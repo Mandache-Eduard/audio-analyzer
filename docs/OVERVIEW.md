@@ -4,8 +4,8 @@
 ## Global Module Call Graph
 ```mermaid
 flowchart TD
-    classDef ok fill:#d4f4dd,stroke:#2e7d32;
-    classDef err fill:#fde0e0,stroke:#c62828;
+    classDef ok fill:#20462d,stroke:#2e7d32;
+    classDef err fill:#a1362a,stroke:#c62828;
 
     audio_frame_analysis["audio_frame_analysis.py"]:::ok
     audio_loader["audio_loader.py"]:::ok
