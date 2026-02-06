@@ -2,17 +2,17 @@
 import numpy as np
 
 # --- Classifier configuration (tunable) ---
-ENERGY_RATIO_THRESHOLD: float = 1e-3     # 0.1% energy above cutoff => frame has HF content
-MIN_ACTIVE_FRACTION: float   = 0.05     # >=5% frames with HF content => Original
-RATIO_DROP_THRESHOLD: float  = 1e-5     # drop near-silent/invalid frames
+ENERGY_RATIO_THRESHOLD: float = 1e-3        # 0.001% energy above cutoff => frame has HF content
+MIN_ACTIVE_FRACTION: float   = 0.05         # >=5% frames with HF content => Original
+RATIO_DROP_THRESHOLD: float  = 1e-5         # drop near-silent/invalid frames
 
 # Confidence shaping for "Likely ORIGINAL"
-ORIGINAL_CONFIDENCE_GAMMA: float = 1.0  # >1 = confidence rises slower near threshold, faster only when evidence is strong
+ORIGINAL_CONFIDENCE_GAMMA: float = 1.0      # >1 = confidence rises slower near threshold, faster only when evidence is strong
 
-MAX_HF_ACTIVE_FRACTION_FOR_CUTOFF = 0.02  # ≤2% frames with energy above cutoff → consistent with that cutoff
-MIN_PREV_CUTOFF_ACTIVE_FRACTION = 0.2     # previous cutoff should be clearly active (>=20% frames) to confirm the elbow
+MAX_HF_ACTIVE_FRACTION_FOR_CUTOFF = 0.02    # ≤2% frames with energy above cutoff → consistent with that cutoff
+MIN_PREV_CUTOFF_ACTIVE_FRACTION = 0.2       # previous cutoff should be clearly active (>=20% frames) to confirm the elbow
 
-LOSSY_CUTOFF_PROFILES = {   # key stands for cutoff frequency in HZ; value stands for expected upscaled kbps rate
+LOSSY_CUTOFF_PROFILES = {                   # key stands for cutoff frequency in HZ; value stands for expected upscaled kbps rate
     13000: 96,
     16000: 128,
     19000: 192,

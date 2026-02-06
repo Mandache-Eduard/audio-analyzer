@@ -13,12 +13,12 @@
   Normalized to `np.float32` and sanitized so it contains only finite values.
 
 - `samplerate: int`  
-  Sampling rate (Hz) returned by the decoder (e.g., 44100, 48000). Used by downstream analysis to compute frequencies and frame sizes.
+  Sampling rate (Hz) returned by the decoder (e.g.: 44100, 48000, 96000). Used by downstream analysis to compute frequencies and frame sizes.
 
 ## Additional Information
 
 ### Data Normalization (`np.float32`)
-Audio decoded via `soundfile` can arrive as different numeric types depending on how the file was encoded and decoded (commonly float64, sometimes integer types). This module converts the sample array to `np.float32` to standardize downstream processing. Using `float32` typically improves performance and reduces memory usage compared to `float64`, while maintaining sufficient precision for the spectral and energy-based analysis performed later in the pipeline.
+Audio decoded via `soundfile` can arrive as different numeric types depending on how the file was encoded and decoded (commonly float64, sometimes integer types). This module converts the sample array to `np.float32` to standardize downstream processing. Using `float32` somewhat improves performance and reduces memory usage compared to `float64`, while maintaining sufficient precision for the analysis later in the pipeline.
 
 ### Non-finite Sample Sanitization (finite-only data)
 To ensure numerical stability, the loader checks whether the sample array contains any non-finite values (`NaN`, `+Inf`, `-Inf`). These values can arise from corruption, decoding edge cases, or unusual source pipelines, and they can propagate through computations (sums/means become `NaN`, infinities dominate scaling), breaking FFT-based analysis. Any non-finite samples are replaced with `0.0` (silence) using `np.nan_to_num`, producing a deterministic, robust output array suitable for further processing.

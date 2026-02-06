@@ -10,10 +10,10 @@
 ### Constants
 
 * `CUTOFF_HZ: float = 20500.0`
-  Probe cutoff frequency in Hz chosen to approximate the high-frequency roll-off commonly observed in ~320 kbps lossy encodes.
+  Probe cutoff frequency in Hz chosen to approximate the high-frequency roll-off commonly observed in 320 kbps MP3 CBR (Constant Bit-Rate) encoders.
 
 * `NYQUIST_SAFETY_BAND_HZ: float = 100.0`
-  Safety margin in Hz subtracted from Nyquist so the probe does not sit too close to the Nyquist limit.
+  Safety margin in Hz subtracted from Nyquist so the probe doesn't sit too close to the Nyquist limit.
 
 ### Key runtime variables (created/used by the module’s functions)
 
