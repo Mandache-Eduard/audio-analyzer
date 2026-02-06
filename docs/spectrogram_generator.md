@@ -98,16 +98,20 @@ flowchart TD
     classDef ok fill:#20462d,stroke:#2e7d32;
     classDef err fill:#a1362a,stroke:#c62828;
 
-    M["spectrogram_generator.py"]:::ok
+    F_spec["spectrogram_for_flac(file_path)"]:::ok
     F_chk["ffmpeg_works()"]:::ok
-    F_spec["spectrogram_for_flac()"]:::ok
+    P_msg["print warning & return None"]:::err
 
-    M --> F_chk
-    M --> F_spec
-    F_spec --> F_chk
-    F_chk -->|"ffmpeg missing / not runnable"| R_false["return False"]:::err
-    F_spec -->|"ffmpeg_works()==False"| P_msg["print warning & return None"]:::err
-    F_spec -->|"ffmpeg_works()==True"| R_png["run ffmpeg & return .png Path"]:::ok
+    F_run["subprocess.run(cmd, check=True)"]:::ok
+    R_out["return out (.png Path)"]:::ok
+    E_fail["FFmpeg exits non-zero\nraises CalledProcessError"]:::err
+
+    F_spec -->|"calls"| F_chk
+    F_chk -->|"False"| P_msg
+    F_chk -->|"True"| F_run
+
+    F_run -->|"success (exit 0)"| R_out
+    F_run -->|"non-zero exit"| E_fail
 ```
 
 ## Function Inventory

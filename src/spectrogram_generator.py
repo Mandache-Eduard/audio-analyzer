@@ -1,6 +1,7 @@
 # spectrogram_generator.py
 import shutil
 import subprocess
+
 from pathlib import Path
 
 def ffmpeg_works() -> bool:

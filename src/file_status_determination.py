@@ -1,14 +1,10 @@
 # file_status_determination.py
 import numpy as np
 
-# --- Classifier configuration (tunable) ---
 ENERGY_RATIO_THRESHOLD: float = 1e-3        # 0.001% energy above cutoff => frame has HF content
 MIN_ACTIVE_FRACTION: float   = 0.05         # >=5% frames with HF content => Original
 RATIO_DROP_THRESHOLD: float  = 1e-5         # drop near-silent/invalid frames
-
-# Confidence shaping for "Likely ORIGINAL"
 ORIGINAL_CONFIDENCE_GAMMA: float = 1.0      # >1 = confidence rises slower near threshold, faster only when evidence is strong
-
 MAX_HF_ACTIVE_FRACTION_FOR_CUTOFF = 0.02    # ≤2% frames with energy above cutoff → consistent with that cutoff
 MIN_PREV_CUTOFF_ACTIVE_FRACTION = 0.2       # previous cutoff should be clearly active (>=20% frames) to confirm the elbow
 
@@ -22,47 +18,7 @@ LOSSY_CUTOFF_PROFILES = {                   # key stands for cutoff frequency in
 
 PROBE_CUTOFFS_HZ = sorted(LOSSY_CUTOFF_PROFILES.keys())
 
-def debug_energy_ratios(ratios):
-    """
-    Compute summary statistics over per-frame high-frequency (HF) energy ratios.
-
-    Definitions
-    ----------
-    For each audio frame we compute:
-
-        ratio = (energy_above_cutoff_hz) / (total_frame_energy)
-
-    where:
-      - energy_above_cutoff_hz: the sum of spectral magnitudes in FFT bins
-        strictly above the chosen cutoff frequency.
-      - total_frame_energy: the sum of spectral magnitudes (or power) across all bins.
-
-    Therefore:
-      - ratio is dimensionless and lies in [0, 1] for valid frames.
-      - ratio ≈ 0 means "no meaningful content above cutoff for that frame".
-      - ratio closer to 1 means "most of the frame's spectral energy is above cutoff"
-        (uncommon for music; usually indicates noise/artifacts or very HF-heavy content).
-
-    Returned dictionary keys
-    ------------------------
-    hf_ratio_min:
-        Minimum ratio across all frames.
-
-    hf_ratio_p90 / hf_ratio_p95 / hf_ratio_p99:
-        The 90th / 95th / 99th percentile of ratios. These describe how "spiky" HF content is.
-        Example: hf_ratio_p99 is the value such that only 1% of frames exceed it.
-
-    hf_ratio_max:
-        Maximum ratio across all frames (useful to spot a few noisy frames).
-
-    hf_ratio_mean:
-        Arithmetic mean of ratios across all frames (overall HF presence proxy).
-
-    Notes
-    -----
-    - This function assumes `ratios` already correspond to a specific cutoff frequency.
-    - If you drop silent frames elsewhere, keep that consistent before calling this.
-    """
+def debug_energy_ratios(ratios):            # Mainly debug function
     x = np.asarray(ratios, dtype=float)
     p0, p90, p95, p99, p100 = np.percentile(x, [0, 90, 95, 99, 100])
     return {
@@ -75,7 +31,6 @@ def debug_energy_ratios(ratios):
     }
 
 def _active_fraction_from_cache(frame_ffts, cutoff_hz, energy_ratio_threshold, ratio_drop_threshold):
-    """Compute active_fraction at a given cutoff using cached FFTs (no re-FFT)."""
     if not frame_ffts:
         return 0.0
     active = 0
@@ -105,14 +60,10 @@ def _active_fraction_from_cache(frame_ffts, cutoff_hz, energy_ratio_threshold, r
     return active / total
 
 def _estimate_bitrate_from_cache(frame_ffts, effective_cutoff, energy_ratio_threshold, ratio_drop_threshold, probe_cutoffs_hz=None):
-    """
-    Probe multiple cutoffs (ascending). Return (label:str, confidence:float, per_cutoff_fractions:dict)
-    Select the first cutoff (ascending) that becomes quiet while the previous cutoff is loud.
-    """
     if probe_cutoffs_hz is None:
         probe_cutoffs_hz = PROBE_CUTOFFS_HZ
 
-    # Only evaluate physically valid cutoffs for this file
+    # Only evaluate valid cutoffs for this file
     probe_list = [c for c in probe_cutoffs_hz if c <= effective_cutoff]
     if not probe_list:
         return None, None, {}
@@ -123,8 +74,7 @@ def _estimate_bitrate_from_cache(frame_ffts, effective_cutoff, energy_ratio_thre
         frac = _active_fraction_from_cache(frame_ffts, c, energy_ratio_threshold, ratio_drop_threshold)
         per_cutoff_fractions[c] = frac
 
-    # 2) Select the FIRST cutoff where activity becomes "quiet" (ascending),
-    #    and the previous cutoff (if any) was "loud".
+    # 2) Select the FIRST cutoff where activity becomes "quiet" (ascending), and the previous cutoff (if any) was "loud".
     selected_cutoff = None
     selected_frac = None
 
@@ -161,18 +111,6 @@ def _estimate_bitrate_from_cache(frame_ffts, effective_cutoff, energy_ratio_thre
     return label, confidence, per_cutoff_fractions
 
 def determine_file_status(ratios, effective_cutoff, frame_ffts=None, probe_cutoffs_hz=None):
-    """
-    Decide ORIGINAL vs UPSCALED using per-frame energy-above-cutoff ratios.
-
-    Expected:
-      ratios: array-like of float in [0..1], each = fraction of frame energy above 'effective_cutoff'
-      effective_cutoff: float (Hz) — the probe frequency for "energy above cutoff"
-      frame_ffts: optional list of cached per-frame FFT artifacts (for later bitrate estimation)
-      probe_cutoffs_hz: optional list of cutoffs to consider during bitrate estimation
-                        (not used unless you integrate the estimation branch)
-    Returns:
-      (status: str, confidence: float in [0,1])
-    """
     frame_energy_above_cutoff_ratios = np.asarray(ratios, dtype=float)
     if frame_energy_above_cutoff_ratios.size == 0:
         return "No audio data.", 0.0

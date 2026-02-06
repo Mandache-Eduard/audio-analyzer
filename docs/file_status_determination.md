@@ -17,12 +17,8 @@
 * `RATIO_DROP_THRESHOLD: float = 1e-5`
   Frames below this ratio are treated as near-silent / invalid and are excluded from the active-fraction calculation.
 
-### Constants (confidence shaping)
-
 * `ORIGINAL_CONFIDENCE_GAMMA: float = 1.0`
   Exponent applied to the normalized distance above `MIN_ACTIVE_FRACTION` when computing confidence for **Likely ORIGINAL**.
-
-### Constants (bitrate / cutoff profiling)
 
 * `MAX_HF_ACTIVE_FRACTION_FOR_CUTOFF = 0.02`
   A probed cutoff is considered “quiet” if at most 2% of frames are active above it.
@@ -42,7 +38,7 @@
   Per-frame HF energy ratios measured **above `effective_cutoff`**.
 
 * `effective_cutoff: float`
-  Probe cutoff in Hz used to compute `ratios` (typically clamped below Nyquist elsewhere).
+  Probe cutoff in Hz used to compute `ratios` (typically clamped below Nyquist elsewhere). It's computed **once per file** and reused for all frames
 
 * `frame_energy_above_cutoff_ratios: np.ndarray`
   `ratios` coerced to `float` and filtered to exclude near-silent frames.
@@ -77,7 +73,7 @@ Expected properties:
 * `ratio ≈ 0` implies little or no meaningful HF content above the cutoff for that frame.
 * Larger ratios imply increasing HF presence above the cutoff.
 
-### `debug_energy_ratios()` statistics (moved from code comments)
+### `debug_energy_ratios()` statistics 
 
 `debug_energy_ratios(ratios)` computes summary statistics over per-frame HF ratios corresponding to a *single cutoff*.
 

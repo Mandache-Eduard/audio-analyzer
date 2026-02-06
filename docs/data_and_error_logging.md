@@ -51,7 +51,7 @@
 
 ## Additional Information
 
-### Directory creation policy (moved from code comments)
+### Directory creation policy
 
 Before appending, `append_result_to_csv()` ensures the destination directory exists:
 

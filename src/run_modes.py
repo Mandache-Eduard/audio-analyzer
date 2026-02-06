@@ -26,10 +26,6 @@ RESULT_FIELDNAMES: Final[List[str]] = [
 ]
 
 def _format_fractions_for_csv(fractions: Optional[Dict[float, float]]) -> str:
-    """
-    Format {cutoff_hz: active_fraction} into a single CSV-friendly string.
-    Example: "13000=0.8123;16000=0.4550;20500=0.0123"
-    """
     if not fractions:
         return ""
     return ";".join(f"{int(k)}={v:.4f}" for k, v in sorted(fractions.items()))
@@ -95,18 +91,22 @@ def run_folder_batch(folder_path):
     csv_path = os.path.join(folder_path, current_daytime_formatted + ".csv")
     flac_file_paths = []
 
+    # 1. Recursive search for files in given folder
     print("Discovering files...")
     for dirpath, dirnames, filenames in os.walk(folder_path, topdown=True, onerror=None, followlinks=False):
         for filename in filenames:
             full_path = os.path.join(dirpath, filename)
             if full_path.lower().endswith(".flac"):
                 flac_file_paths.append(full_path)
-
     print("Discovered {} files.".format(len(flac_file_paths)))
+
+    # 2. Run same operations as in run_single_file, but for every file found
     print("Processing files and saving results...")
     for flac_file_path in tqdm(flac_file_paths):
         try:
             result = run_single_file(flac_file_path, want_verbose=False, want_spectrogram=False)
         except Exception:
             result = {"path": flac_file_path, "status": "ERROR"}
+
+        # 3. Save the results in a .csv file in the given folder
         append_result_to_csv(csv_path, result)

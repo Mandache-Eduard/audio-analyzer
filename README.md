@@ -15,11 +15,11 @@ ___
     <a href="https://github.com/Mandache-Eduard/flac-authenticator/blob/main/docs/OVERVIEW.md"><strong>Explore the docs »</strong></a>
     <br />
     <br />
-    <a href="https://github.com/github_username/repo_name"><strong>View Demo (To be added)</a>
+    <a href="https://github.com/github_username/repo_name"><strong>View Demo (To be added)</strong></a>
     &middot;
-    <a href="https://github.com/Mandache-Eduard/flac-authenticator/issues/new?labels=bug&template=bug_report.md"><strong>Report Bug</a>
+    <a href="https://github.com/Mandache-Eduard/flac-authenticator/issues/new?labels=bug&template=bug_report.md"><strong>Report Bug</strong></a>
     &middot;
-    <a href="https://github.com/Mandache-Eduard/flac-authenticator/issues/new?labels=enhancement&template=feature_or_request.md"><strong>Request Feature</a>
+    <a href="https://github.com/Mandache-Eduard/flac-authenticator/issues/new?labels=enhancement&template=feature_or_request.md"><strong>Request Feature</strong></a>
   </p>
 </div>
 
@@ -63,8 +63,10 @@ ___
 ## Requirements
 
 Pyhton version: 3.14t (free-threaded)
-External utilities: FFMPEG
 
+External utilities: FFmpeg (<a href="https://github.com/oop7/ffmpeg-install-guide"><strong>installation guide here»</strong></a>)
+
+    
 ___
 
 <!-- INSTALLATION -->
@@ -103,17 +105,21 @@ ___
 ## Roadmap
 
 ### Future features
-- [ ] Expand the program to also scan MP3 and other file formats to detect upscaling/authenticiy.
+- [ ] Expand the program to scan MP3 and other file formats to detect upscaling/authenticiy.
+- [ ] Expand the program to do AI-generated audio detection.
+- [ ] Expand the program to separate the vocals and instrumental.
 - [ ] Implement a local database, to avoid scanning already scanned files and only focus on files added since last scan
-- [ ] Implement different checks for .flac files (audio artifacts, checksums, etc.)
+- [ ] Implement different checks for audio files origin (audio artifacts, checksums, metadata etc.)
 - [ ] Add file recognition from MusicBrainz Picard Database/AcoustID!
     - [ ] Fetch metadata and let the user choose to update it
+    - [ ] Let the user choose which version they prefer (if multiple versions come back for the same file)
 - [ ] Create a UI for ease of use
     - [ ] Rewrite program for multithreading (1 thread for UI, 1 thread for file processing)
     - [ ] Provide both dark and light themes
 
 ### Features in development
 - [ ] Implement FFmpeg spectrogram creation for low-confidence files
+- [ ] Adjust the algorithm for more accurate results
 
 ### Completed features
 - [X] Implement a loading bar to visualize progress

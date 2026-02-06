@@ -22,16 +22,6 @@
 
 ## Additional Information
 
-### License header and redistribution terms
-
-The file begins with a GNU General Public License v3 (GPL-3.0-only) header.
-
-Implications:
-
-* You may redistribute and/or modify the program under GPLv3 terms.
-* The program is distributed without warranty (including implied merchantability/fitness).
-* Users should receive a copy of the GPL license text or be directed to the official license page.
-
 ### CLI usage and mode selection (moved from code comments)
 
 This entrypoint supports two run modes based on the single required argument:

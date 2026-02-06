@@ -54,7 +54,7 @@
 
 ## Additional Information
 
-### CSV schema stability and “key drift” prevention (moved from code comments)
+### CSV schema stability and “key drift” prevention
 
 `run_single_file()` constructs `result` by first creating an empty dict with the canonical schema:
 
@@ -70,38 +70,6 @@ Purpose:
 * Avoids accidental schema divergence when upstream code adds/removes keys over time.
 * Keeps `append_result_to_csv()` output consistent (especially in batch mode).
 
-### File-level effective cutoff computed once and reused (moved from code comments)
-
-`effective_cutoff_hz = calculate_effective_cutoff(samplerate)` is computed **once per file** and reused for all frames.
-
-This ensures:
-
-* All per-frame ratios are comparable within a file.
-* The ratio computation stays consistent with Nyquist constraints (handled inside `calculate_effective_cutoff()`).
-
-### Per-frame analysis with FFT caching for later reuse (moved from code comments)
-
-Frame processing is performed as:
-
-```
-fft_cache = []
-ratios = [
-  analyze_frame(frame, samplerate, effective_cutoff_hz, fft_cache_list=fft_cache)
-  for frame in frames
-]
-```
-
-Effects:
-
-* Produces `ratios` used for the initial ORIGINAL-vs-UPSCALED decision.
-* Populates `fft_cache` with per-frame FFT artifacts, enabling later cutoff/bitrate probing **without re-running FFTs**.
-
-This cache is then passed into status determination:
-
-```
-determine_file_status(ratios, effective_cutoff_hz, frame_ffts=fft_cache)
-```
-
 If the file is not confidently original, `determine_file_status()` can use `frame_ffts` to estimate an elbow cutoff profile and return `fractions` (per-cutoff active fractions).
 
 ### Per-cutoff fractions serialization for CSV
@@ -111,8 +79,6 @@ If the file is not confidently original, `determine_file_status()` can use `fram
 * Format: `"13000=0.8123;16000=0.4550;20500=0.0123"`
 * Cutoffs are sorted ascending.
 * Values are formatted to 4 decimals.
-
-This produces a CSV-friendly, single-cell representation suitable for later parsing.
 
 ### Batch folder mode: discovery, processing, and error fallback
 
