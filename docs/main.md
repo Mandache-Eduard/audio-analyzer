@@ -22,41 +22,6 @@
 
 ## Additional Information
 
-### CLI usage and mode selection (moved from code comments)
-
-This entrypoint supports two run modes based on the single required argument:
-
-1. **Single-file mode**
-   Condition:
-
-   * `os.path.isfile(path)` and `path.lower().endswith(".flac")`
-
-   Action:
-
-   * `run_single_file(path, want_verbose=True, want_spectrogram=True)`
-
-   Notes:
-
-   * Verbose logging is enabled.
-   * Spectrogram generation is requested (requires FFmpeg availability as checked inside the spectrogram module).
-
-2. **Folder batch mode**
-   Condition:
-
-   * `os.path.isdir(path)`
-
-   Action:
-
-   * `run_folder_batch(path)`
-
-   Notes:
-
-   * Batch mode is responsible for file discovery and CSV logging.
-
-Invalid input:
-
-* If `path` is neither a FLAC file nor a directory, the program prints an error message and exits.
-
 ### Help and argument validation
 
 The program enforces a minimal CLI contract:
@@ -66,33 +31,44 @@ The program enforces a minimal CLI contract:
 
 The usage guidance instructs quoting the file path to avoid shell parsing issues.
 
-### Entrypoint guard
-
-The module uses the standard Python entrypoint guard:
-
-* When executed as a script, `main()` is called.
-* When imported as a module, no execution occurs automatically.
-
 ## Module Workflow (call graph)
 
 ```mermaid
-flowchart TD
+    flowchart TD
     classDef ok fill:#20462d,stroke:#2e7d32;
     classDef err fill:#a1362a,stroke:#c62828;
 
-    M["main.py"]:::ok
     F_main["main()"]:::ok
-    F_single["run_single_file()"]:::ok
-    F_batch["run_folder_batch()"]:::ok
 
-    M --> F_main
+    C_argc{"len(sys.argv) < 2 ?"}:::ok
+    E_args["print error<br/>return"]:::err
 
-    F_main -->|"argv too short"| E_args["print error + return"]:::err
-    F_main -->|"argv[1] == help"| E_help["print usage + return"]:::ok
+    C_help{"sys.argv[1] == 'help' ?"}:::ok
+    E_help["print usage<br/>return"]:::ok
 
-    F_main -->|"isfile && .flac"| F_single
-    F_main -->|"isdir"| F_batch
-    F_main -->|"otherwise"| E_inv["print invalid path + return"]:::err
+    S_path["path = sys.argv[1]"]:::ok
+
+    C_file{"os.path.isfile(path)<br/>AND path.lower().endswith('.flac') ?"}:::ok
+    A_single["run_single_file(path,<br/>want_verbose=True,<br/>want_spectrogram=True)"]:::ok
+
+    C_dir{"os.path.isdir(path) ?"}:::ok
+    A_batch["run_folder_batch(path)"]:::ok
+
+    E_inv["print invalid path / not .flac<br/>return"]:::err
+
+    F_main --> C_argc
+    C_argc -->|"True"| E_args
+    C_argc -->|"False"| C_help
+
+    C_help -->|"True"| E_help
+    C_help -->|"False"| S_path
+
+    S_path --> C_file
+    C_file -->|"True"| A_single
+    C_file -->|"False"| C_dir
+
+    C_dir -->|"True"| A_batch
+    C_dir -->|"False"| E_inv
 ```
 
 ## Function Inventory

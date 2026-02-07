@@ -99,26 +99,50 @@ If the file is not confidently original, `determine_file_status()` can use `fram
 ```mermaid
 flowchart TD
     classDef ok fill:#20462d,stroke:#2e7d32;
+    classDef err fill:#a1362a,stroke:#c62828;
 
-    M["run_modes.py"]:::ok
+    F_single["run_single_file(file_path, want_verbose, want_spectrogram)"]:::ok
+    A_load["load_flac()"]:::ok
+    A_div["divide_into_frames()"]:::ok
+    A_cut["calculate_effective_cutoff()"]:::ok
+    A_af["analyze_frame() x N (collect fft_cache)"]:::ok
+    A_det["determine_file_status()"]:::ok
     F_fmt["_format_fractions_for_csv()"]:::ok
-    F_single["run_single_file()"]:::ok
-    F_batch["run_folder_batch()"]:::ok
+    A_spec["spectrogram_for_flac() (optional)"]:::ok
+    R_ret["return result dict"]:::ok
 
-    M --> F_fmt
-    M --> F_single
-    M --> F_batch
+    E_fail["exception propagates to caller"]:::err
 
-    F_single --> A_load["load_flac()"]:::ok
-    F_single --> A_div["divide_into_frames()"]:::ok
-    F_single --> A_cut["calculate_effective_cutoff()"]:::ok
-    F_single --> A_af["analyze_frame()"]:::ok
-    F_single --> A_det["determine_file_status()"]:::ok
-    F_single --> A_spec["spectrogram_for_flac()"]:::ok
+    F_single --> A_load --> A_div --> A_cut --> A_af --> A_det --> F_fmt --> R_ret
+    F_single -->|"if want_spectrogram"| A_spec --> R_ret
 
-    F_batch --> A_walk["os.walk()"]:::ok
-    F_batch --> F_single
-    F_batch --> A_csv["append_result_to_csv()"]:::ok
+    %% any internal call can raise; not caught here
+    A_load -.-> E_fail
+    A_div -.-> E_fail
+    A_cut -.-> E_fail
+    A_af -.-> E_fail
+    A_det -.-> E_fail
+    A_spec -.-> E_fail
+```
+
+```mermaid
+flowchart TD
+    classDef ok fill:#20462d,stroke:#2e7d32;
+    classDef err fill:#a1362a,stroke:#c62828;
+
+    F_batch["run_folder_batch(folder_path)"]:::ok
+    A_walk["os.walk()"]:::ok
+    F_single["run_single_file(..., want_verbose=False, want_spectrogram=False)"]:::ok
+    A_csv["append_result_to_csv(csv_path, result)"]:::ok
+
+    E_rs["run_single_file raises Exception"]:::err
+    R_err["result = {'path': flac_file_path, 'status': 'ERROR'}"]:::err
+
+    F_batch --> A_walk
+    A_walk -->|"for each .flac found"| F_single
+    F_single -->|"success"| A_csv
+
+    F_single -->|"exception"| E_rs --> R_err --> A_csv
 ```
 
 ## Function Inventory

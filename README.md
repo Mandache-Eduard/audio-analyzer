@@ -66,30 +66,31 @@ Pyhton version: 3.14t (free-threaded)
 
 External utilities: FFmpeg (<a href="https://github.com/oop7/ffmpeg-install-guide"><strong>installation guide here»</strong></a>)
 
-    
 ___
 
 <!-- INSTALLATION -->
 ## Installation
 
-1. Get a free API Key at [https://example.com](https://example.com)
-2. Clone the repo
+This project does not require any API keys or external services.
+
+To run it locally:
+
+1. Clone the repository
    ```sh
-   git clone https://github.com/github_username/repo_name.git
-   ```
-3. Install NPM packages
+   git clone https://github.com/Mandache-Eduard/flac-authenticator.git
+    ```
+
+2. Ensure **FFmpeg** is installed and available in your system `PATH`
+   (see the link above)
+
+3. Run the program using Python
+
    ```sh
-   npm install
+   python main.py <path-to-flac-file-or-folder>
    ```
-4. Enter your API in `config.js`
-   ```js
-   const API_KEY = 'ENTER YOUR API';
-   ```
-5. Change git remote url to avoid accidental pushes to base project
-   ```sh
-   git remote set-url origin github_username/repo_name
-   git remote -v # confirm the changes
-   ```
+
+That’s it — no additional configuration is required. For now at least
+
 ___
 
 <!-- USAGE EXAMPLES -->
@@ -167,6 +168,7 @@ ___
 
 * [Best README Template](https://github.com/othneildrew/Best-README-Template)
 * [Choose an Open Source License](https://choosealicense.com)
+* [Coding Adventure: Analyzing Audio ](https://youtu.be/08mmKNLQVHU?si=Np_zQtD1m7JBj8ky) - this video offers a nice, visual way to understand some concepts used in this project
 
 <!-- MARKDOWN LINKS & IMAGES -->
 <!-- https://www.markdownguide.org/basic-syntax/#reference-style-links -->

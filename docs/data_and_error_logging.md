@@ -112,12 +112,55 @@ This allows upstream code to attach debugging or intermediate metadata to `resul
 ## Module Workflow (call graph)
 
 ```mermaid
-flowchart TD
+    flowchart TD
     classDef ok fill:#20462d,stroke:#2e7d32;
+    classDef loop fill:#9e9e9e,stroke:#616161,color:#000;
 
-    M["data_and_error_logging.py"]:::ok
-    F_app["append_result_to_csv()"]:::ok
-    M --> F_app
+    F_app["append_result_to_csv(csv_path, result, fieldnames)"]:::ok
+
+    S_dir["parent_dir = dirname(abspath(csv_path))"]:::ok
+    C_dir{"parent_dir true ?"}:::ok
+    A_mk["os.makedirs(parent_dir, exist_ok=True)"]:::ok
+
+    S_exists["file_exists = os.path.isfile(csv_path)"]:::ok
+
+    L_row["loop: build row from fieldnames"]:::loop
+    A_row["row[k] = result.get(k, '')"]:::ok
+
+    S_conf["conf = row.get('confidence')"]:::ok
+    C_conf{"conf is float/int ?"}:::ok
+    A_conf["row['confidence'] = format %.6f"]:::ok
+
+    S_el["elapsed = row.get('elapsed_s')"]:::ok
+    C_el{"elapsed is float/int ?"}:::ok
+    A_el["row['elapsed_s'] = format %.6f"]:::ok
+
+    A_open["open(csv_path, 'a', encoding='utf-8')"]:::ok
+    A_writer["csv.DictWriter(... extrasaction='ignore' ...)"]:::ok
+    C_head{"not file_exists ?"}:::ok
+    A_head["writer.writeheader()"]:::ok
+    A_write["writer.writerow(row)"]:::ok
+
+    F_app --> S_dir --> C_dir
+    C_dir -->|"Yes"| A_mk --> S_exists
+    C_dir -->|"No"| S_exists
+
+    S_exists --> L_row
+    L_row -->|"for each k in fieldnames"| A_row
+    A_row --> L_row
+    L_row -->|"done"| S_conf
+
+    S_conf --> C_conf
+    C_conf -->|"Yes"| A_conf --> S_el
+    C_conf -->|"No"| S_el
+
+    S_el --> C_el
+    C_el -->|"Yes"| A_el --> A_open
+    C_el -->|"No"| A_open
+
+    A_open --> A_writer --> C_head
+    C_head -->|"Yes"| A_head --> A_write
+    C_head -->|"No"| A_write
 ```
 
 ## Function Inventory

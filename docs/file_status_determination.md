@@ -172,19 +172,160 @@ confidence = clip(1.0 - selected_frac, 0.0, 1.0)
 ## Module Workflow (call graph)
 
 ```mermaid
-flowchart TD
-    classDef ok fill:#20462d,stroke:#2e7d32;
+  flowchart TD
+  classDef ok fill:#20462d,stroke:#2e7d32;
+  classDef err fill:#a1362a,stroke:#c62828;
+  classDef loop fill:#9e9e9e,stroke:#616161,color:#000;
 
-    M["file_status_determination.py"]:::ok
-    F_det["determine_file_status()"]:::ok
-    F_dbg["debug_energy_ratios()"]:::ok
-    F_est["_estimate_bitrate_from_cache()"]:::ok
-    F_act["_active_fraction_from_cache()"]:::ok
+  F_det["determine_file_status()"]:::ok
 
-    M --> F_det
-    M --> F_dbg
-    F_det --> F_est
-    F_est --> F_act
+  D0["asarray(ratios)"]:::ok
+  C0{"size == 0 ?"}:::ok
+  R0["return 'No audio data.', 0.0"]:::err
+
+  D1["filter ratios > RATIO_DROP_THRESHOLD"]:::ok
+  C1{"size == 0 after filter ?"}:::ok
+  R1["return 'Likely UPSCALED (no significant frames)', 0.0"]:::err
+
+  D2["active_fraction = mean(ratio > ENERGY_RATIO_THRESHOLD)"]:::ok
+  C2{"active_fraction >= MIN_ACTIVE_FRACTION ?"}:::ok
+
+  D3["compute confidence<br/>normalize above threshold<br/>apply gamma"]:::ok
+  R2["return 'Likely ORIGINAL', confidence, None"]:::ok
+
+  C3{"frame_ffts provided ?"}:::ok
+  F_est["_estimate_bitrate_from_cache()"]:::ok
+  C4{"label is not None ?"}:::ok
+  R3["return label, conf2, per_cutoff_fractions"]:::ok
+  R4["return 'Inconclusive (no cutoff match)', 0.0, per_cutoff_fractions"]:::err
+  R5["return 'Inconclusive (no FFT cache)', 0.0, {}"]:::err
+
+  F_det --> D0 --> C0
+  C0 -->|"Yes"| R0
+  C0 -->|"No"| D1 --> C1
+  C1 -->|"Yes"| R1
+  C1 -->|"No"| D2 --> C2
+  C2 -->|"Yes"| D3 --> R2
+  C2 -->|"No"| C3
+  C3 -->|"Yes"| F_est --> C4
+  C4 -->|"Yes"| R3
+  C4 -->|"No"| R4
+  C3 -->|"No"| R5
+```
+
+```mermaid
+  flowchart TD
+  classDef ok fill:#20462d,stroke:#2e7d32;
+  classDef err fill:#a1362a,stroke:#c62828;
+  classDef loop fill:#9e9e9e,stroke:#616161,color:#000;
+
+  F_est["_estimate_bitrate_from_cache()"]:::ok
+
+  E0["if probe_cutoffs_hz is None<br/>use PROBE_CUTOFFS_HZ"]:::ok
+  E1["probe_list = cutoffs <= effective_cutoff"]:::ok
+  C0{"probe_list empty ?"}:::ok
+  R0["return None, None, {}"]:::err
+
+  E2["per_cutoff_fractions = {}"]:::ok
+  L1["loop: compute fractions"]:::loop
+  A1["_active_fraction_from_cache(...)"]:::ok
+
+  E3["selected_cutoff = None"]:::ok
+  L2["loop: find first quiet cutoff"]:::loop
+  Cq{"frac(c) <= MAX_HF_ACTIVE_FRACTION_FOR_CUTOFF ?"}:::ok
+  Cfirst{"idx == 0 ?"}:::ok
+  Cprev{"prev_frac >= MIN_PREV_CUTOFF_ACTIVE_FRACTION ?"}:::ok
+
+  C1{"selected_cutoff found ?"}:::ok
+
+  E4["quiet_cutoffs = all quiet cutoffs"]:::ok
+  C2{"quiet_cutoffs non-empty ?"}:::ok
+  E5["select lowest quiet cutoff"]:::ok
+  R1["return None, None, per_cutoff_fractions"]:::err
+
+  E6["kbps = LOSSY_CUTOFF_PROFILES[selected_cutoff]"]:::ok
+  C3{"kbps missing ?"}:::ok
+  R2["return None, None, per_cutoff_fractions"]:::err
+
+  E7["label + confidence = clip(1 - selected_frac)"]:::ok
+  R3["return label, confidence, per_cutoff_fractions"]:::ok
+
+  F_est --> E0 --> E1 --> C0
+  C0 -->|"Yes"| R0
+  C0 -->|"No"| E2
+
+  %% loop 1: compute fractions
+  E2 --> L1
+  L1 -->|"for each c in probe_list"| A1
+  A1 --> L1
+  L1 -->|"done"| E3
+
+  %% loop 2: select cutoff
+  E3 --> L2
+  L2 -->|"for each (idx,c) in probe_list"| Cq
+  Cq -->|"No"| L2
+  Cq -->|"Yes"| Cfirst
+  Cfirst -->|"Yes"| C1
+  Cfirst -->|"No"| Cprev
+  Cprev -->|"Yes"| C1
+  Cprev -->|"No"| L2
+  L2 -->|"done"| C1
+
+  %% post-selection
+  C1 -->|"Yes"| E6
+  C1 -->|"No"| E4 --> C2
+  C2 -->|"Yes"| E5 --> E6
+  C2 -->|"No"| R1
+
+  E6 --> C3
+  C3 -->|"Yes"| R2
+  C3 -->|"No"| E7 --> R3
+```
+
+```mermaid
+  flowchart TD
+  classDef ok fill:#20462d,stroke:#2e7d32;
+  classDef err fill:#a1362a,stroke:#c62828;
+  classDef loop fill:#9e9e9e,stroke:#616161,color:#000;
+
+  F_act["_active_fraction_from_cache()"]:::ok
+
+  C0{"frame_ffts empty ?"}:::ok
+  R0["return 0.0"]:::err
+
+  A0["active=0, total=0"]:::ok
+  L0["loop: iterate frames"]:::loop
+
+  Cskip{"skip frame?<br/>total_energy<=0 OR missing arrays OR empty arrays"}:::ok
+  Aidx["idx = searchsorted(freqs_hz, cutoff_hz, 'right')"]:::ok
+  Arat["ratio = 0 if idx>=size<br/>else sum(spectrum_abs[idx:]) / total_energy"]:::ok
+
+  Ckeep{"ratio > ratio_drop_threshold ?"}:::ok
+  Atot["total += 1"]:::ok
+  Cact{"ratio > energy_ratio_threshold ?"}:::ok
+  Aact["active += 1"]:::ok
+
+  Cend{"total == 0 ?"}:::ok
+  R1["return 0.0"]:::err
+  R2["return active/total"]:::ok
+
+  F_act --> C0
+  C0 -->|"Yes"| R0
+  C0 -->|"No"| A0 --> L0
+
+  L0 -->|"for each f in frame_ffts"| Cskip
+  Cskip -->|"Yes"| L0
+  Cskip -->|"No"| Aidx --> Arat --> Ckeep
+
+  Ckeep -->|"No"| L0
+  Ckeep -->|"Yes"| Atot --> Cact
+  Cact -->|"Yes"| Aact --> L0
+  Cact -->|"No"| L0
+
+  L0 -->|"done"| Cend
+  Cend -->|"Yes"| R1
+  Cend -->|"No"| R2
+
 ```
 
 ## Function Inventory
