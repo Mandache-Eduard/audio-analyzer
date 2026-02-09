@@ -119,10 +119,10 @@ ___
     - [ ] Provide both dark and light themes
 
 ### Features in development
-- [ ] Implement FFmpeg spectrogram creation for low-confidence files
 - [ ] Adjust the algorithm for more accurate results
 
 ### Completed features
+- [X] Implement FFmpeg spectrogram creation for low-confidence files
 - [X] Implement a loading bar to visualize progress
 - [X] Save results in a log file (.CSV)
 - [X] Scan a folder structure recursively

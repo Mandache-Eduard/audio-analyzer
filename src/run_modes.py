@@ -80,9 +80,6 @@ def run_single_file(file_path, want_verbose, want_spectrogram):
             for k, v in sorted(fractions.items()):
                 print(f"  {int(k)}: {v:.4f}")
 
-    if want_spectrogram:
-        spectrogram_for_flac(file_path)
-
     return result
 
 def run_folder_batch(folder_path):
@@ -106,7 +103,10 @@ def run_folder_batch(folder_path):
         result = {"path": flac_file_path, "status": ""}
 
         try:
-            result = run_single_file(flac_file_path, want_verbose=False, want_spectrogram=False)
+            result = run_single_file(flac_file_path, want_verbose=False, want_spectrogram=True)
+            if result.get("status") != "Likely ORIGINAL":
+                spectrogram_for_flac(folder_path, flac_file_path)
+
         except Exception as e:
             # Keep a minimal, schema-safe error row
             result.update(

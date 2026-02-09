@@ -1,4 +1,5 @@
 # spectrogram_generator.py
+import os
 import shutil
 import subprocess
 
@@ -18,13 +19,16 @@ def ffmpeg_works() -> bool:
     except OSError:
         return False
 
-def spectrogram_for_flac(file_path):
+def spectrogram_for_flac(root_path, file_path):
     if not ffmpeg_works():
         print("FFmpeg not detected or not runnable. Please install it and ensure it's in PATH.")
         return None
 
     in_path = Path(file_path)
-    out = in_path.with_suffix(".png")
+    root_path = Path(root_path)
+    spectrogram_directory = root_path / "spectrograms"
+    spectrogram_directory.mkdir(parents=True, exist_ok=True)
+    out_path = (spectrogram_directory / in_path.name).with_suffix(".png")
     w, h = 3840, 2160 # 4K UHD output
 
     lavfi = (
@@ -45,8 +49,8 @@ def spectrogram_for_flac(file_path):
         "-lavfi", lavfi,
         "-frames:v", "1",
         "-update", "1",
-        str(out),
+        str(out_path),
     ]
 
     subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    return out
+    return out_path
