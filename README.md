@@ -2,7 +2,7 @@
 <br />
 <div align="center">
   <a href="https://github.com/Mandache-Eduard/flac-authenticator">
-    <img src="Images/audio_analyzer_project_picture.jpg" alt="Logo" width="450" height="450">
+    <img src="images/audio_analyzer_project_picture.jpg" alt="Logo" width="450" height="450">
   </a>
 
 <h3 align="center">Audio Analyzer</h3>
