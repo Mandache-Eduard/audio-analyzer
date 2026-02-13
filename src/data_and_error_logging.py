@@ -1,13 +1,14 @@
 # data_and_error_logging.py
 import csv
 import os
-from typing import Any, Dict, Iterable
+
+from datetime import datetime
+from typing import Any, Dict, Iterable, Sequence
 
 RESULT_FIELDNAMES: list[str] = [
     "path",
     "status",
     "confidence",
-    "elapsed_s",
     "samplerate_hz",
     "num_samples",
     "num_total_frames",
@@ -16,28 +17,31 @@ RESULT_FIELDNAMES: list[str] = [
     "per_cutoff_active_fraction",
 ]
 
-def append_result_to_csv(
+def create_csv_path(folder_path):
+    current_datetime = datetime.now()
+    current_daytime_formatted = current_datetime.strftime('%Y-%B-%d__%H-%M-%S')
+    dated_csv_path = os.path.join(folder_path, current_daytime_formatted + ".csv")
+    return dated_csv_path
+
+def append_results_to_csv(
     csv_path: str,
-    result: Dict[str, Any],
+    results: Sequence[Dict[str, Any]],
     fieldnames: Iterable[str] = RESULT_FIELDNAMES,
 ) -> None:
 
-    parent_dir = os.path.dirname(os.path.abspath(csv_path))
-    if parent_dir:
-        os.makedirs(parent_dir, exist_ok=True)
-
+    rows = []
     file_exists = os.path.isfile(csv_path)
-    row = {k: result.get(k, "") for k in fieldnames}
 
-    conf = row.get("confidence")
-    if isinstance(conf, (float, int)):
-        row["confidence"] = f"{float(conf):.6f}"
+    for result in results:
+        row = {k: result.get(k, "") for k in fieldnames}
+        rows.append(row)
 
-    elapsed = row.get("elapsed_s")
-    if isinstance(elapsed, (float, int)):
-        row["elapsed_s"] = f"{float(elapsed):.6f}"
+        conf = row.get("confidence")
+        if isinstance(conf, (float, int)):
+            row["confidence"] = f"{float(conf):.6f}"
 
     with open(csv_path, "a", newline="", encoding="utf-8") as f:
+
         writer = csv.DictWriter(
             f,
             fieldnames=list(fieldnames),
@@ -46,4 +50,4 @@ def append_result_to_csv(
         )
         if not file_exists:
             writer.writeheader()
-        writer.writerow(row)
+        writer.writerows(rows)

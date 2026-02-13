@@ -33,8 +33,7 @@ def main():
     path = sys.argv[1]
 
     if os.path.isfile(path) and path.lower().endswith(".flac"):
-        run_single_file(path, want_verbose=True, want_spectrogram=True)
-
+        run_single_file(path, want_verbose=True)
     elif os.path.isdir(path):
         run_folder_batch(path)
 
