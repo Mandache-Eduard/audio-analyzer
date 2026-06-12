@@ -1,5 +1,3 @@
-
-
 <!-- AUTO-GENERATED:BEGIN -->
 ## Global Module Call Graph
 ```mermaid

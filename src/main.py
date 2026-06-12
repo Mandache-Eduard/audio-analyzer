@@ -16,7 +16,16 @@
 import os
 import sys
 
-from run_modes import run_single_file, run_folder_batch
+LYRICS_MODE_UNSYNCED = "lyrics-unsynced"
+LYRICS_MODE_SYNCED = "lyrics-synced"
+LYRICS_MODE_NONE = "no-lyrics"
+SUPPORTED_LYRICS_MODES = frozenset(
+    {
+        LYRICS_MODE_UNSYNCED,
+        LYRICS_MODE_SYNCED,
+        LYRICS_MODE_NONE,
+    }
+)
 
 def main():
     # 0. Set instructions and manuals
@@ -25,21 +34,83 @@ def main():
         return
 
     elif sys.argv[1] == "help":
-        print("""Usage: py main.py "<path_to_flac_file>" (including .flac extension, and use quotes for correct shell parsing.)""")
-        print("For example: python main.py X:\\path\\to\\file.flac")
+        print("""Usage: py main.py <analyse|group> "<path_to_file_or_folder>" [lyrics_mode]""")
+        print("Examples:")
+        print("""  py main.py analyse "X:\\path\\to\\file.flac" """)
+        print("""  py main.py analyse "X:\\path\\to\\folder" """)
+        print("""  py main.py group "X:\\path\\to\\folder" """)
+        print("""  py main.py group "X:\\path\\to\\folder" no-lyrics """)
+        print("""  py main.py group "X:\\path\\to\\folder" lyrics-unsynced """)
+        print("""  py main.py group "X:\\path\\to\\folder" lyrics-synced """)
+        print("Supported lyrics modes: {}".format(", ".join(sorted(SUPPORTED_LYRICS_MODES))))
         return
 
-    # 1. Get file or folder path from command-line argument and determine running mode
-    path = sys.argv[1]
+    if len(sys.argv) < 3:
+        print("Missing arguments - check usage using 'py main.py help'")
+        return
 
-    if os.path.isfile(path) and path.lower().endswith(".flac"):
-        run_single_file(path, want_verbose=True)
-    elif os.path.isdir(path):
-        run_folder_batch(path)
+    # 1. Get action and target path from command-line arguments and determine running mode
+    action = sys.argv[1].lower()
+    path = sys.argv[2]
+    lyrics_mode = LYRICS_MODE_NONE
+
+    if action == "analyse":
+        if len(sys.argv) > 3:
+            print("Analyse mode does not accept a lyrics mode argument.")
+            return
+
+        from audio_analysis.analyse_modes import analyse_single_file, analyse_folder_batch
+
+        if os.path.isfile(path) and path.lower().endswith(".flac"):
+            analyse_single_file(path, want_verbose=True)
+        elif os.path.isdir(path):
+            analyse_folder_batch(path)
+        else:
+            print("Invalid path for analyse mode or not a FLAC file.")
+            return
+
+    elif action == "group":
+        if len(sys.argv) > 4:
+            print("Too many arguments for group mode - check usage using 'py main.py help'")
+            return
+
+        if len(sys.argv) >= 4:
+            lyrics_mode = sys.argv[3].strip().lower()
+            if lyrics_mode not in SUPPORTED_LYRICS_MODES:
+                print(
+                    "Invalid lyrics mode - use one of: {}".format(
+                        ", ".join(sorted(SUPPORTED_LYRICS_MODES))
+                    )
+                )
+                return
+
+        if os.path.isdir(path):
+            from metadata_enrichment_and_file_grouping.group_mode import (
+                build_group_mode_services,
+                group_folder_batch,
+            )
+
+            try:
+                musicbrainz_client, acoustid_client, fingerprint_service = build_group_mode_services()
+            except Exception as exc:
+                print(str(exc))
+                return
+
+            group_folder_batch(
+                path,
+                musicbrainz_client=musicbrainz_client,
+                acoustid_client=acoustid_client,
+                fingerprint_service=fingerprint_service,
+                lyrics_mode=lyrics_mode,
+            )
+        else:
+            print("Group mode currently expects a folder path.")
+            return
 
     else:
-        print("Invalid file path or not a FLAC file.")
+        print("Invalid action - use 'analyse' or 'group'.")
         return
+
 
 if __name__ == "__main__":
     main()

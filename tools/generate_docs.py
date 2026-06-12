@@ -19,7 +19,7 @@ MODULES = [
     "file_status_determination.py",
     "spectrogram_generator.py",
     "main.py",
-    "run_modes.py",
+    "analyse_modes.py",
     "data_and_error_logging.py",
     "audio_frame_analysis.py",
 ]

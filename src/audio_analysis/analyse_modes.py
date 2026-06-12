@@ -1,15 +1,15 @@
-# run_modes.py
+# analyse_modes.py
 import os
 
 from typing import Any, Dict, Final, List, Optional
 from tqdm import tqdm
-from audio_frame_analysis import analyze_frame, divide_into_frames, calculate_effective_cutoff
-from audio_loader import load_flac
+from audio_analysis.audio_frame_analysis import analyze_frame, divide_into_frames, calculate_effective_cutoff
+from audio_analysis.audio_loader import load_flac
 
-from file_status_determination import determine_file_status
-from data_and_error_logging import append_results_to_csv
-from data_and_error_logging import create_csv_path
-from spectrogram_generator import generate_spectrogram_threads
+from audio_analysis.file_status_determination import determine_file_status
+from audio_analysis.data_and_error_logging import append_results_to_csv
+from audio_analysis.data_and_error_logging import create_csv_path
+from audio_analysis.spectrogram_generator import generate_spectrogram_threads
 
 BATCH_SIZE = 50 #number of entries to be written in the .csv file at once
 
@@ -30,7 +30,7 @@ def _format_fractions_for_csv(fractions: Optional[Dict[float, float]]) -> str:
         return ""
     return ";".join(f"{int(k)}={v:.4f}" for k, v in sorted(fractions.items()))
 
-def run_single_file(file_path, want_verbose):
+def analyse_single_file(file_path, want_verbose):
     # 1. Load audio
     data, samplerate = load_flac(file_path)
 
@@ -78,7 +78,7 @@ def run_single_file(file_path, want_verbose):
 
     return result
 
-def run_folder_batch(folder_path):
+def analyse_folder_batch(folder_path):
     # 1. Recursive search for files in given folder
     print("Discovering files...")
     flac_file_paths: list[str] = []
@@ -106,7 +106,7 @@ def run_folder_batch(folder_path):
         result = {"path": flac_file_path, "status": ""}
 
         try:
-            result = run_single_file(flac_file_path, want_verbose=False)
+            result = analyse_single_file(flac_file_path, want_verbose=False)
 
         except Exception as e:
             # Keep a minimal, schema-safe error row

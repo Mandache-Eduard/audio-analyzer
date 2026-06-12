@@ -3,5 +3,12 @@ numpy
 scipy
 matplotlib
 mutagen
+python-dotenv
+lyricsgenius
 
 tqdm
+beautifulsoup4
+requests
+pillow
+scikit-image
+scikit-learn

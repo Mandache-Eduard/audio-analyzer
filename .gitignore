@@ -3,3 +3,10 @@
 *.xml
 /.idea
 /.idea
+.env
+.env.*
+!.env.example
+Workflow.txt
+TAGS.txt
+METADATA_FORMATS.txt
+/src/sorted_files
