@@ -5,6 +5,8 @@ from pathlib import Path
 from typing import Any, Iterable
 
 MINIMUM_EDGE_WEIGHT = 2
+SHARED_RELEASE_WEIGHT = 2
+SHARED_RELEASE_GROUP_WEIGHT = 1
 WEAK_SAME_PARENT_BONUS = 1
 
 
@@ -22,7 +24,12 @@ def cluster_resolved_tracks(
 
     indexed_results = list(enumerate(resolved_result_list))
     release_to_file_indices = _build_release_to_file_indices(indexed_results)
-    edge_weights = _build_edge_weights(indexed_results, release_to_file_indices)
+    release_group_to_file_indices = _build_release_group_to_file_indices(indexed_results)
+    edge_weights = _build_edge_weights(
+        indexed_results,
+        release_to_file_indices,
+        release_group_to_file_indices,
+    )
     adjacency = _build_adjacency(indexed_results, edge_weights)
     clusters = _build_connected_components(indexed_results, adjacency)
 
@@ -36,6 +43,10 @@ def cluster_resolved_tracks(
         "release_to_file_indices": {
             release_mbid: sorted(file_indices)
             for release_mbid, file_indices in release_to_file_indices.items()
+        },
+        "release_group_to_file_indices": {
+            release_group_mbid: sorted(file_indices)
+            for release_group_mbid, file_indices in release_group_to_file_indices.items()
         },
     }
 
@@ -52,9 +63,22 @@ def _build_release_to_file_indices(
     return release_to_file_indices
 
 
+def _build_release_group_to_file_indices(
+    indexed_results: list[tuple[int, dict[str, Any]]],
+) -> dict[str, set[int]]:
+    release_group_to_file_indices: dict[str, set[int]] = defaultdict(set)
+
+    for file_index, resolved_result in indexed_results:
+        for release_group_mbid in _extract_candidate_release_group_mbids(resolved_result):
+            release_group_to_file_indices[release_group_mbid].add(file_index)
+
+    return release_group_to_file_indices
+
+
 def _build_edge_weights(
     indexed_results: list[tuple[int, dict[str, Any]]],
     release_to_file_indices: dict[str, set[int]],
+    release_group_to_file_indices: dict[str, set[int]],
 ) -> dict[tuple[int, int], int]:
     edge_weights: dict[tuple[int, int], int] = defaultdict(int)
 
@@ -62,7 +86,13 @@ def _build_edge_weights(
         ordered_indices = sorted(file_indices)
         for left_offset, left_index in enumerate(ordered_indices):
             for right_index in ordered_indices[left_offset + 1 :]:
-                edge_weights[(left_index, right_index)] += 1
+                edge_weights[(left_index, right_index)] += SHARED_RELEASE_WEIGHT
+
+    for file_indices in release_group_to_file_indices.values():
+        ordered_indices = sorted(file_indices)
+        for left_offset, left_index in enumerate(ordered_indices):
+            for right_index in ordered_indices[left_offset + 1 :]:
+                edge_weights[(left_index, right_index)] += SHARED_RELEASE_GROUP_WEIGHT
 
     parent_groups: dict[Path, list[int]] = defaultdict(list)
     for file_index, resolved_result in indexed_results:
@@ -172,3 +202,22 @@ def _extract_candidate_release_mbids(resolved_result: dict[str, Any]) -> list[st
         ordered_release_mbids.append(cleaned_release_mbid)
 
     return ordered_release_mbids
+
+
+def _extract_candidate_release_group_mbids(resolved_result: dict[str, Any]) -> list[str]:
+    candidate_release_group_mbids = resolved_result.get("candidate_release_group_mbids", [])
+    if not isinstance(candidate_release_group_mbids, list):
+        return []
+
+    seen: set[str] = set()
+    ordered_release_group_mbids: list[str] = []
+    for release_group_mbid in candidate_release_group_mbids:
+        if not isinstance(release_group_mbid, str):
+            continue
+        cleaned_release_group_mbid = release_group_mbid.strip()
+        if not cleaned_release_group_mbid or cleaned_release_group_mbid in seen:
+            continue
+        seen.add(cleaned_release_group_mbid)
+        ordered_release_group_mbids.append(cleaned_release_group_mbid)
+
+    return ordered_release_group_mbids

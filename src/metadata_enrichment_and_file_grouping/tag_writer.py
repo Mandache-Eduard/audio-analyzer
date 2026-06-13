@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import os
 import re
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -45,6 +48,7 @@ from mutagen.mp4 import MP4, MP4FreeForm
 from mutagen.oggopus import OggOpus
 from mutagen.oggvorbis import OggVorbis
 from mutagen.wave import WAVE
+from tqdm import tqdm
 
 VORBIS_EXTENSIONS = frozenset({".flac", ".ogg", ".opus"})
 ID3_EXTENSIONS = frozenset({".mp3", ".wav", ".aiff"})
@@ -53,7 +57,49 @@ ASF_EXTENSIONS = frozenset({".wma"})
 
 
 def write_tags_to_copied_files(copy_results: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
-    return [write_tags_to_copied_file(copy_result) for copy_result in copy_results]
+    copy_result_list = list(copy_results)
+    if not copy_result_list:
+        return []
+
+    cores = os.cpu_count() or 1
+    max_workers = max(1, min(cores // 2, 6))
+    reserved_output_paths: set[str] = set()
+    reservation_lock = threading.Lock()
+    tag_write_results: list[dict[str, Any] | None] = [None] * len(copy_result_list)
+
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        future_to_index = {
+            executor.submit(
+                _write_tags_to_copied_file_reserved,
+                copy_result,
+                reserved_output_paths,
+                reservation_lock,
+            ): index
+            for index, copy_result in enumerate(copy_result_list)
+        }
+
+        for future in tqdm(
+            as_completed(future_to_index),
+            total=len(future_to_index),
+            desc="Files tagged",
+            unit="file",
+        ):
+            index = future_to_index[future]
+            copy_result = copy_result_list[index]
+            try:
+                tag_write_results[index] = future.result()
+            except Exception as exc:
+                tag_write_results[index] = _tag_write_exception_result(copy_result, exc)
+
+    return [
+        tag_write_result
+        if tag_write_result is not None
+        else _tag_write_exception_result(
+            copy_result,
+            RuntimeError("tag worker produced no result"),
+        )
+        for copy_result, tag_write_result in zip(copy_result_list, tag_write_results)
+    ]
 
 
 def write_tags_to_copied_file(copy_result: dict[str, Any]) -> dict[str, Any]:
@@ -106,6 +152,46 @@ def write_tags_to_copied_file(copy_result: dict[str, Any]) -> dict[str, Any]:
         "reason": "best-effort WAV ID3 chunk tagging"
         if extension == ".wav"
         else None,
+    }
+
+
+def _write_tags_to_copied_file_reserved(
+    copy_result: dict[str, Any],
+    reserved_output_paths: set[str],
+    reservation_lock: threading.Lock,
+) -> dict[str, Any]:
+    if copy_result.get("status") != "copied":
+        return write_tags_to_copied_file(copy_result)
+
+    copied_path = copy_result.get("copied_path")
+    if copied_path is None:
+        return write_tags_to_copied_file(copy_result)
+
+    output_path = Path(copied_path)
+    output_path_key = _normalize_output_path_key(output_path)
+
+    with reservation_lock:
+        if output_path_key in reserved_output_paths:
+            return {
+                "copied_path": str(output_path),
+                "status": "error",
+                "reason": "copied output path is already being tagged by another worker",
+            }
+        reserved_output_paths.add(output_path_key)
+
+    return write_tags_to_copied_file(copy_result)
+
+
+def _normalize_output_path_key(path: Path) -> str:
+    return os.path.normcase(str(path.resolve(strict=False)))
+
+
+def _tag_write_exception_result(copy_result: dict[str, Any], exc: Exception) -> dict[str, Any]:
+    copied_path = copy_result.get("copied_path")
+    return {
+        "copied_path": str(copied_path) if copied_path is not None else None,
+        "status": "error",
+        "reason": str(exc),
     }
 
 
@@ -327,10 +413,30 @@ def _build_common_tag_values(metadata: dict[str, Any]) -> dict[str, list[str]]:
     _set_if_present(values, "artist", metadata.get("artist"))
     _set_list_if_present(values, "artists", metadata.get("artists"))
     _set_if_present(values, "artistsort", metadata.get("artist_sort"))
+    _set_if_present(values, "titlesort", metadata.get("titlesort"))
     _set_if_present(values, "genre", metadata.get("genre"))
     _set_if_present(values, "composer", metadata.get("composer"))
+    _set_if_present(values, "composersort", metadata.get("composersort"))
+    _set_if_present(values, "lyricist", metadata.get("lyricist"))
+    _set_if_present(values, "writer", metadata.get("writer"))
+    _set_if_present(values, "arranger", metadata.get("arranger"))
     _set_if_present(values, "conductor", metadata.get("conductor"))
+    _set_list_if_present(values, "performer", metadata.get("performer"))
+    _set_if_present(values, "producer", metadata.get("producer"))
+    _set_if_present(values, "engineer", metadata.get("engineer"))
+    _set_if_present(values, "mixer", metadata.get("mixer"))
+    _set_if_present(values, "djmixer", metadata.get("djmixer"))
+    _set_if_present(values, "director", metadata.get("director"))
     _set_if_present(values, "grouping", metadata.get("grouping"))
+    _set_if_present(values, "work", metadata.get("work"))
+    _set_if_present(values, "movement", metadata.get("movement"))
+    _set_if_present(values, "movementnumber", metadata.get("movementnumber"))
+    _set_if_present(values, "movementtotal", metadata.get("movementtotal"))
+    _set_if_present(values, "showmovement", metadata.get("showmovement"))
+    _set_if_present(values, "mood", metadata.get("mood"))
+    _set_if_present(values, "language", metadata.get("language"))
+    _set_if_present(values, "comment", metadata.get("comment"))
+    _set_if_present(values, "compilation", metadata.get("compilation"))
     _set_if_present(values, "asin", metadata.get("asin"))
     _set_if_present(values, "barcode", metadata.get("barcode"))
     _set_list_if_present(values, "catalognumber", metadata.get("catalognumber"))
@@ -343,12 +449,15 @@ def _build_common_tag_values(metadata: dict[str, Any]) -> dict[str, list[str]]:
     _set_list_if_present(values, "musicbrainz_albumartistid", metadata.get("musicbrainz_albumartistid"))
     _set_if_present(values, "musicbrainz_albumid", metadata.get("release_mbid"))
     _set_list_if_present(values, "musicbrainz_artistid", metadata.get("musicbrainz_artistid"))
+    _set_if_present(values, "musicbrainz_composerid", metadata.get("musicbrainz_composerid"))
     _set_if_present(values, "musicbrainz_discid", metadata.get("musicbrainz_discid"))
     _set_if_present(values, "musicbrainz_originalalbumid", metadata.get("musicbrainz_originalalbumid"))
     _set_list_if_present(values, "musicbrainz_originalartistid", metadata.get("musicbrainz_originalartistid"))
     _set_if_present(values, "musicbrainz_recordingid", metadata.get("recording_mbid"))
     _set_if_present(values, "musicbrainz_releasegroupid", metadata.get("release_group_mbid"))
     _set_if_present(values, "musicbrainz_trackid", metadata.get("track_mbid"))
+    _set_if_present(values, "musicbrainz_trmid", metadata.get("musicbrainz_trmid"))
+    _set_if_present(values, "musicbrainz_workid", metadata.get("musicbrainz_workid"))
     _set_if_present(values, "originaldate", metadata.get("original_date"))
     _set_if_present(values, "originalyear", metadata.get("original_year"))
     _set_if_present(values, "releasecountry", metadata.get("release_country"))
@@ -365,16 +474,30 @@ def _build_common_tag_values(metadata: dict[str, Any]) -> dict[str, list[str]]:
     _set_if_present(values, "albumsort", metadata.get("albumsort"))
     _set_if_present(values, "bpm", _coerce_tag_string(metadata.get("bpm")))
     _set_if_present(values, "copyright", metadata.get("copyright"))
+    _set_if_present(values, "license", metadata.get("license"))
     _set_if_present(values, "encodedby", metadata.get("encodedby"))
     _set_if_present(values, "encodersettings", metadata.get("encodersettings"))
     _set_if_present(values, "key", metadata.get("key"))
     _set_if_present(values, "lyrics", metadata.get("lyrics"))
+    _set_if_present(values, "originalfilename", metadata.get("originalfilename"))
     _set_if_present(values, "publisher", metadata.get("publisher"))
-    _set_if_present(values, "url", metadata.get("url"))
+    _set_if_present(values, "website", metadata.get("website") or metadata.get("url"))
     _set_if_present(values, "originalartist", metadata.get("originalartist"))
     _set_if_present(values, "remixer", metadata.get("remixer"))
     _set_if_present(values, "musicip_fingerprint", metadata.get("musicip_fingerprint"))
     _set_if_present(values, "musicip_puid", metadata.get("musicip_puid"))
+    _set_if_present(values, "replaygain_album_gain", metadata.get("replaygain_album_gain"))
+    _set_if_present(values, "replaygain_album_peak", metadata.get("replaygain_album_peak"))
+    _set_if_present(values, "replaygain_album_range", metadata.get("replaygain_album_range"))
+    _set_if_present(
+        values,
+        "replaygain_reference_loudness",
+        metadata.get("replaygain_reference_loudness"),
+    )
+    _set_if_present(values, "replaygain_track_gain", metadata.get("replaygain_track_gain"))
+    _set_if_present(values, "replaygain_track_peak", metadata.get("replaygain_track_peak"))
+    _set_if_present(values, "replaygain_track_range", metadata.get("replaygain_track_range"))
+    _set_if_present(values, "rating", metadata.get("rating"))
 
     return values
 
@@ -385,8 +508,11 @@ def _build_vorbis_style_tag_values(metadata: dict[str, Any]) -> dict[str, list[s
 
     for key, values in common_values.items():
         target_keys = _vorbis_target_keys(key, metadata)
+        target_values = _vorbis_values_for_key(key, values)
+        if not target_values:
+            continue
         for target_key in target_keys:
-            vorbis_values[target_key] = list(values)
+            vorbis_values[target_key] = list(target_values)
 
     return vorbis_values
 
@@ -558,19 +684,112 @@ def _clean_string(value: Any) -> str | None:
 
 def _vorbis_target_keys(key: str, metadata: dict[str, Any]) -> list[str]:
     key_map = {
+        "title": ["TITLE"],
+        "artist": ["ARTIST"],
+        "artists": ["ARTISTS"],
+        "artistsort": ["ARTISTSORT"],
+        "album": ["ALBUM"],
+        "albumsort": ["ALBUMSORT"],
+        "albumartist": ["ALBUMARTIST"],
+        "albumartistsort": ["ALBUMARTISTSORT"],
+        "tracknumber": ["TRACKNUMBER"],
+        "totaltracks": ["TRACKTOTAL", "TOTALTRACKS"],
+        "discnumber": ["DISCNUMBER"],
+        "totaldiscs": ["DISCTOTAL", "TOTALDISCS"],
+        "discsubtitle": ["DISCSUBTITLE"],
+        "date": ["DATE"],
+        "originaldate": ["ORIGINALDATE"],
+        "originalyear": ["ORIGINALYEAR"],
+        "releasecountry": ["RELEASECOUNTRY"],
+        "releasestatus": ["RELEASESTATUS"],
+        "releasetype": ["RELEASETYPE"],
+        "media": ["MEDIA"],
+        "label": ["LABEL"],
+        "barcode": ["BARCODE"],
+        "catalognumber": ["CATALOGNUMBER"],
+        "asin": ["ASIN"],
+        "composer": ["COMPOSER"],
+        "composersort": ["COMPOSERSORT"],
+        "lyricist": ["LYRICIST"],
+        "writer": ["WRITER"],
+        "arranger": ["ARRANGER"],
+        "conductor": ["CONDUCTOR"],
+        "performer": ["PERFORMER"],
+        "producer": ["PRODUCER"],
+        "engineer": ["ENGINEER"],
+        "mixer": ["MIXER"],
+        "djmixer": ["DJMIXER"],
+        "remixer": ["REMIXER"],
+        "director": ["DIRECTOR"],
+        "work": ["WORK"],
+        "movement": ["MOVEMENTNAME"],
+        "movementnumber": ["MOVEMENT"],
+        "movementtotal": ["MOVEMENTTOTAL"],
+        "showmovement": ["SHOWMOVEMENT"],
+        "genre": ["GENRE"],
+        "grouping": ["GROUPING"],
+        "mood": ["MOOD"],
+        "bpm": ["BPM"],
+        "key": ["KEY"],
+        "language": ["LANGUAGE"],
+        "comment": ["COMMENT"],
+        "subtitle": ["SUBTITLE"],
+        "titlesort": ["TITLESORT"],
+        "compilation": ["COMPILATION"],
+        "copyright": ["COPYRIGHT"],
+        "license": ["LICENSE"],
+        "website": ["WEBSITE"],
+        "lyrics": ["LYRICS"],
+        "encodedby": ["ENCODEDBY"],
+        "encodersettings": ["ENCODERSETTINGS"],
+        "originalfilename": ["ORIGINALFILENAME"],
+        "replaygain_album_gain": ["REPLAYGAIN_ALBUM_GAIN"],
+        "replaygain_album_peak": ["REPLAYGAIN_ALBUM_PEAK"],
+        "replaygain_album_range": ["REPLAYGAIN_ALBUM_RANGE"],
+        "replaygain_reference_loudness": ["REPLAYGAIN_REFERENCE_LOUDNESS"],
+        "replaygain_track_gain": ["REPLAYGAIN_TRACK_GAIN"],
+        "replaygain_track_peak": ["REPLAYGAIN_TRACK_PEAK"],
+        "replaygain_track_range": ["REPLAYGAIN_TRACK_RANGE"],
         "musicbrainz_albumartistid": ["MUSICBRAINZ_ALBUMARTISTID"],
         "musicbrainz_albumid": ["MUSICBRAINZ_ALBUMID"],
         "musicbrainz_artistid": ["MUSICBRAINZ_ARTISTID"],
+        "musicbrainz_composerid": ["MUSICBRAINZ_COMPOSERID"],
         "musicbrainz_discid": ["MUSICBRAINZ_DISCID"],
         "musicbrainz_originalalbumid": ["MUSICBRAINZ_ORIGINALALBUMID"],
         "musicbrainz_originalartistid": ["MUSICBRAINZ_ORIGINALARTISTID"],
-        "musicbrainz_recordingid": ["MUSICBRAINZ_RECORDINGID", "MUSICBRAINZ_TRACKID"],
+        "musicbrainz_recordingid": ["MUSICBRAINZ_TRACKID"],
         "musicbrainz_releasegroupid": ["MUSICBRAINZ_RELEASEGROUPID"],
         "musicbrainz_trackid": ["MUSICBRAINZ_RELEASETRACKID"],
+        "musicbrainz_trmid": ["MUSICBRAINZ_TRMID"],
+        "musicbrainz_workid": ["MUSICBRAINZ_WORKID"],
+        "isrc": ["ISRC"],
         "acoustid_id": ["ACOUSTID_ID"],
         "acoustid_fingerprint": ["ACOUSTID_FINGERPRINT"],
+        "musicip_puid": ["MUSICIP_PUID"],
+        "musicip_fingerprint": ["FINGERPRINT"],
     }
+    if key == "rating":
+        rating_email = _clean_string(metadata.get("rating_email")) or _clean_string(
+            metadata.get("rating_user_email")
+        )
+        return [f"RATING:{rating_email}"] if rating_email else ["RATING"]
     return key_map.get(key, [key.upper()])
+
+
+def _vorbis_values_for_key(key: str, values: list[str]) -> list[str]:
+    if key == "musicip_fingerprint":
+        normalized_values: list[str] = []
+        for value in values:
+            cleaned_value = _clean_string(value)
+            if cleaned_value is None:
+                continue
+            if cleaned_value.startswith("MusicMagic Fingerprint "):
+                normalized_values.append(cleaned_value)
+            else:
+                normalized_values.append(f"MusicMagic Fingerprint {cleaned_value}")
+        return normalized_values
+
+    return values
 
 
 def _parse_lrc_entries(value: Any) -> list[tuple[str, int]]:

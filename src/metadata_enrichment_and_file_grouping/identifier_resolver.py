@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Iterable
 
+from metadata_enrichment_and_file_grouping.fingerprint import FingerprintResult
 from metadata_enrichment_and_file_grouping.tag_reader import ExistingAudioMetadata
 
 
@@ -10,6 +11,7 @@ def resolve_identifier(
     musicbrainz_client: Any,
     acoustid_client: Any,
     fingerprint_service: Any,
+    precomputed_fingerprints_by_path: dict[str, FingerprintResult | Exception] | None = None,
 ) -> dict[str, Any]:
     """
     Decide how to identify one audio file.
@@ -34,6 +36,18 @@ def resolve_identifier(
             acoustid_client,
         )
 
+    if precomputed_fingerprints_by_path is not None:
+        precomputed_fingerprint = precomputed_fingerprints_by_path.get(
+            str(existing_metadata.original_path)
+        )
+        if precomputed_fingerprint is not None:
+            return _resolve_by_precomputed_fingerprint(
+                existing_metadata,
+                musicbrainz_client,
+                acoustid_client,
+                precomputed_fingerprint,
+            )
+
     return _resolve_by_fingerprint(
         existing_metadata,
         musicbrainz_client,
@@ -47,6 +61,7 @@ def resolve_identifier_batch(
     musicbrainz_client: Any,
     acoustid_client: Any,
     fingerprint_service: Any,
+    precomputed_fingerprints_by_path: dict[str, FingerprintResult | Exception] | None = None,
 ) -> list[dict[str, Any]]:
     return [
         resolve_identifier(
@@ -54,6 +69,7 @@ def resolve_identifier_batch(
             musicbrainz_client=musicbrainz_client,
             acoustid_client=acoustid_client,
             fingerprint_service=fingerprint_service,
+            precomputed_fingerprints_by_path=precomputed_fingerprints_by_path,
         )
         for metadata_row in metadata_rows
     ]
@@ -64,12 +80,14 @@ def demo_resolve_identifier_batch(
     musicbrainz_client: Any,
     acoustid_client: Any,
     fingerprint_service: Any,
+    precomputed_fingerprints_by_path: dict[str, FingerprintResult | Exception] | None = None,
 ) -> list[dict[str, Any]]:
     resolution_rows = resolve_identifier_batch(
         metadata_rows=metadata_rows,
         musicbrainz_client=musicbrainz_client,
         acoustid_client=acoustid_client,
         fingerprint_service=fingerprint_service,
+        precomputed_fingerprints_by_path=precomputed_fingerprints_by_path,
     )
 
     for resolution in resolution_rows:
@@ -213,19 +231,27 @@ def _resolve_by_existing_acoustid(
         )
 
     candidates = _extract_acoustid_recording_mbids(acoustid_client, result)
-    candidate_release_mbids, release_lookup_error = _lookup_release_mbids_for_recordings(
-        musicbrainz_client,
-        candidates,
+    candidate_release_mbids, release_lookup_error = _resolve_acoustid_release_candidates(
+        acoustid_client=acoustid_client,
+        musicbrainz_client=musicbrainz_client,
+        result=result,
+        recording_mbids=candidates,
     )
+    candidate_release_group_mbids = _extract_acoustid_release_group_mbids(
+        acoustid_client,
+        result,
+    )
+    status = _status_from_acoustid_result(result, candidates, candidate_release_mbids)
     return _build_result(
-        status=_status_from_result(result),
+        status=status,
         source="existing_acoustid",
         existing_metadata=existing_metadata,
         recording_mbid=candidates[0] if len(candidates) == 1 else None,
         candidate_recording_mbids=candidates,
         candidate_release_mbids=candidate_release_mbids,
+        candidate_release_group_mbids=candidate_release_group_mbids,
         result=result,
-        error=release_lookup_error,
+        error=_format_acoustid_error(result) if status == "error" else release_lookup_error,
     )
 
 
@@ -274,6 +300,46 @@ def _resolve_by_fingerprint(
             error=str(exc),
         )
 
+    return _resolve_by_fingerprint_result(
+        existing_metadata,
+        musicbrainz_client,
+        acoustid_client,
+        fingerprint_result,
+    )
+
+
+def _resolve_by_precomputed_fingerprint(
+    existing_metadata: ExistingAudioMetadata,
+    musicbrainz_client: Any,
+    acoustid_client: Any,
+    precomputed_fingerprint: FingerprintResult | Exception,
+) -> dict[str, Any]:
+    if isinstance(precomputed_fingerprint, Exception):
+        return _build_result(
+            status="unmatched",
+            source="fingerprint_failed",
+            existing_metadata=existing_metadata,
+            recording_mbid=None,
+            candidate_recording_mbids=[],
+            candidate_release_mbids=[],
+            result=None,
+            error=str(precomputed_fingerprint),
+        )
+
+    return _resolve_by_fingerprint_result(
+        existing_metadata,
+        musicbrainz_client,
+        acoustid_client,
+        precomputed_fingerprint,
+    )
+
+
+def _resolve_by_fingerprint_result(
+    existing_metadata: ExistingAudioMetadata,
+    musicbrainz_client: Any,
+    acoustid_client: Any,
+    fingerprint_result: FingerprintResult,
+) -> dict[str, Any]:
     fingerprint = getattr(fingerprint_result, "fingerprint", None)
     duration_seconds = getattr(fingerprint_result, "duration_seconds", None)
     if not fingerprint or duration_seconds is None:
@@ -318,19 +384,27 @@ def _resolve_by_fingerprint(
         )
 
     candidates = _extract_acoustid_recording_mbids(acoustid_client, result)
-    candidate_release_mbids, release_lookup_error = _lookup_release_mbids_for_recordings(
-        musicbrainz_client,
-        candidates,
+    candidate_release_mbids, release_lookup_error = _resolve_acoustid_release_candidates(
+        acoustid_client=acoustid_client,
+        musicbrainz_client=musicbrainz_client,
+        result=result,
+        recording_mbids=candidates,
     )
+    candidate_release_group_mbids = _extract_acoustid_release_group_mbids(
+        acoustid_client,
+        result,
+    )
+    status = _status_from_acoustid_result(result, candidates, candidate_release_mbids)
     return _build_result(
-        status=_status_from_result(result),
+        status=status,
         source="fingerprint_acoustid",
         existing_metadata=existing_metadata,
         recording_mbid=candidates[0] if len(candidates) == 1 else None,
         candidate_recording_mbids=candidates,
         candidate_release_mbids=candidate_release_mbids,
+        candidate_release_group_mbids=candidate_release_group_mbids,
         result=result,
-        error=release_lookup_error,
+        error=_format_acoustid_error(result) if status == "error" else release_lookup_error,
         acoustid_id=_extract_acoustid_identifier(acoustid_client, result),
     )
 
@@ -345,6 +419,7 @@ def _build_result(
     candidate_release_mbids: list[str],
     result: Any,
     error: str | None,
+    candidate_release_group_mbids: list[str] | None = None,
     acoustid_id: str | None = None,
 ) -> dict[str, Any]:
     return {
@@ -354,6 +429,7 @@ def _build_result(
         "recording_mbid": recording_mbid,
         "candidate_recording_mbids": candidate_recording_mbids,
         "candidate_release_mbids": candidate_release_mbids,
+        "candidate_release_group_mbids": candidate_release_group_mbids or [],
         "isrc": existing_metadata.isrc,
         "acoustid_id": acoustid_id if acoustid_id is not None else existing_metadata.acoustid_id,
         "track_number": None,
@@ -366,6 +442,47 @@ def _build_result(
 
 def _status_from_result(result: Any) -> str:
     return "resolved" if result else "unmatched"
+
+
+def _status_from_acoustid_result(
+    result: Any,
+    candidate_recording_mbids: list[str],
+    candidate_release_mbids: list[str],
+) -> str:
+    if not result:
+        return "unmatched"
+    if _acoustid_response_status(result) == "error":
+        return "error"
+    return "resolved" if candidate_recording_mbids or candidate_release_mbids else "unmatched"
+
+
+def _acoustid_response_status(result: Any) -> str | None:
+    if not isinstance(result, dict):
+        return None
+
+    status = result.get("status")
+    return status.strip().casefold() if isinstance(status, str) else None
+
+
+def _format_acoustid_error(result: Any) -> str:
+    if not isinstance(result, dict):
+        return "AcoustID returned an error response."
+
+    error = result.get("error")
+    if not isinstance(error, dict):
+        return "AcoustID returned status=error without an error payload."
+
+    code = error.get("code")
+    message = error.get("message")
+    details: list[str] = []
+    if code is not None:
+        details.append(f"code={code}")
+    if isinstance(message, str) and message.strip():
+        details.append(f"message={message.strip()}")
+
+    if not details:
+        return "AcoustID returned status=error with an empty error payload."
+    return "AcoustID returned status=error ({})".format(", ".join(details))
 
 
 def _extract_musicbrainz_recording_mbids(
@@ -402,6 +519,24 @@ def _extract_acoustid_identifier(acoustid_client: Any, result: Any) -> str | Non
         return extractor(result)
     return None
 
+def _extract_acoustid_release_mbids(acoustid_client: Any, result: Any) -> list[str]:
+    extractor = getattr(acoustid_client, "extract_release_mbids", None)
+    if callable(extractor):
+        extracted_mbids = _deduplicate_strings(extractor(result))
+        if extracted_mbids:
+            return extracted_mbids
+
+    return []
+
+def _extract_acoustid_release_group_mbids(acoustid_client: Any, result: Any) -> list[str]:
+    extractor = getattr(acoustid_client, "extract_release_group_mbids", None)
+    if callable(extractor):
+        extracted_mbids = _deduplicate_strings(extractor(result))
+        if extracted_mbids:
+            return extracted_mbids
+
+    return []
+
 
 def _extract_musicbrainz_release_mbids(
     musicbrainz_client: Any,
@@ -415,6 +550,19 @@ def _extract_musicbrainz_release_mbids(
             return extracted_mbids
 
     return _deduplicate_strings(fallback or [])
+
+def _resolve_acoustid_release_candidates(
+    *,
+    acoustid_client: Any,
+    musicbrainz_client: Any,
+    result: Any,
+    recording_mbids: list[str],
+) -> tuple[list[str], str | None]:
+    direct_release_mbids = _extract_acoustid_release_mbids(acoustid_client, result)
+    if direct_release_mbids:
+        return direct_release_mbids, None
+
+    return _lookup_release_mbids_for_recordings(musicbrainz_client, recording_mbids)
 
 
 def _lookup_release_mbids_for_recordings(

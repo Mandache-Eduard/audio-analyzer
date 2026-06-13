@@ -8,6 +8,10 @@ from typing import Any, Iterable
 MINIMUM_SELECTION_THRESHOLD = 80
 SELECTION_MARGIN = 25
 SHORTLIST_LIMIT = 3
+SUMMARY_DOMINANT_MATCH_RATIO = 0.85
+SUMMARY_DOMINANT_MIN_GAP = 3
+SUMMARY_DOMINANT_MIN_GAP_RATIO = 0.35
+SUMMARY_DOMINANT_MAX_TRACK_COUNT_DIFFERENCE_RATIO = 0.33
 
 
 def select_release_for_group(
@@ -57,7 +61,7 @@ def select_release_for_group(
     }
 
     detailed_candidate_scores: list[dict[str, Any]] = []
-    for candidate_score in shortlisted_candidates:
+    for index, candidate_score in enumerate(shortlisted_candidates):
         release_mbid = candidate_score["release_mbid"]
         if musicbrainz_client is None:
             return {
@@ -92,6 +96,15 @@ def select_release_for_group(
         )
         detailed_candidate_scores.append(rescored_candidate)
         candidate_scores_by_mbid[release_mbid] = rescored_candidate
+        if index == 0 and _summary_evidence_is_overwhelming(
+            ranked_summary_scores,
+            input_track_count,
+            rescored_candidate,
+        ):
+            rescored_candidate["reasons"].append(
+                "Skipped remaining detailed release lookups because summary evidence was dominant"
+            )
+            break
 
     _apply_earliest_official_release_tiebreaker(detailed_candidate_scores)
 
@@ -271,6 +284,37 @@ def _build_summary_candidate_score(
         "selected_release": None,
         "date": None,
     }
+
+def _summary_evidence_is_overwhelming(
+    ranked_summary_scores: list[dict[str, Any]],
+    input_track_count: int,
+    detailed_top_candidate: dict[str, Any],
+) -> bool:
+    if input_track_count <= 0 or not ranked_summary_scores:
+        return False
+
+    top_candidate = ranked_summary_scores[0]
+    top_matched_recordings = _coerce_int(top_candidate.get("matched_recordings")) or 0
+    top_matched_ratio = top_matched_recordings / input_track_count
+    if top_matched_ratio < SUMMARY_DOMINANT_MATCH_RATIO:
+        return False
+
+    second_matched_recordings = 0
+    if len(ranked_summary_scores) > 1:
+        second_matched_recordings = (
+            _coerce_int(ranked_summary_scores[1].get("matched_recordings")) or 0
+        )
+    required_gap = max(
+        SUMMARY_DOMINANT_MIN_GAP,
+        int(input_track_count * SUMMARY_DOMINANT_MIN_GAP_RATIO),
+    )
+    if top_matched_recordings - second_matched_recordings < required_gap:
+        return False
+
+    track_count_difference_ratio = detailed_top_candidate.get("track_count_difference_ratio")
+    if not isinstance(track_count_difference_ratio, (int, float)):
+        return False
+    return track_count_difference_ratio <= SUMMARY_DOMINANT_MAX_TRACK_COUNT_DIFFERENCE_RATIO
 
 
 def _score_release_detail(

@@ -1,18 +1,19 @@
 # spectrogram_generator.py
 import os
-import shutil
 import subprocess
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from tqdm import tqdm
 
+FFMPEG_PATH = Path(__file__).resolve().parents[2] / "tools" / "ffmpeg" / "bin" / "ffmpeg.exe"
+
 def ffmpeg_works() -> bool:
-    if not shutil.which("ffmpeg"):
+    if not FFMPEG_PATH.is_file():
         return False
     try:
         completed_process = subprocess.run(
-            ["ffmpeg", "-version"],
+            [str(FFMPEG_PATH), "-version"],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             check=False
@@ -41,7 +42,7 @@ def single_spectrogram(spectrogram_directory: Path, upscaled_file_path: str | Pa
     )
 
     cmd = [
-        "ffmpeg",
+        str(FFMPEG_PATH),
         "-hide_banner", "-loglevel", "error",
         "-y",
         "-i", str(upscaled_file_path),
@@ -59,7 +60,7 @@ def generate_spectrogram_threads(root_path: str, upscaled_flac_file_paths: list[
     spectrogram_directory.mkdir(parents=True, exist_ok=True)
 
     if not ffmpeg_works():
-        print("FFmpeg not detected or not runnable. Please install it and ensure it's in PATH.")
+        print(f"FFmpeg not detected or not runnable at: {FFMPEG_PATH}")
         return None
 
     cores = os.cpu_count() or 1

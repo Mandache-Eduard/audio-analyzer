@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import os
 import re
+import time
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
 import requests
+from tqdm import tqdm
 
 from metadata_enrichment_and_file_grouping.tag_writer import write_tags_to_copied_file
 
@@ -23,10 +25,21 @@ SUPPORTED_LYRICS_MODES = frozenset(
 )
 
 LRCLIB_BASE_URL = "https://lrclib.net/api"
-DEFAULT_REQUEST_TIMEOUT_SECONDS = 10.0
+DEFAULT_REQUEST_TIMEOUT_SECONDS = 20.0
+DEFAULT_LRCLIB_CONNECT_TIMEOUT_SECONDS = 5.0
+DEFAULT_LRCLIB_GET_READ_TIMEOUT_SECONDS = 10.0
+DEFAULT_LRCLIB_SEARCH_READ_TIMEOUT_SECONDS = 20.0
+DEFAULT_LRCLIB_GET_MAX_ATTEMPTS = 1
+DEFAULT_LRCLIB_SEARCH_MAX_ATTEMPTS = 3
+DEFAULT_LRCLIB_RETRY_BACKOFF_SECONDS = 1.0
 DEFAULT_DURATION_TOLERANCE_SECONDS = 2.0
 COMMON_VARIANT_TOKENS = frozenset({"live", "remix", "cover"})
 LRCLIB_USER_AGENT = "flac-authenticator/0.1.0"
+LRCLIB_RETRYABLE_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
+ARTIST_SPLIT_PATTERN = re.compile(
+    r"\s*(?:;|\bwith\b|\bfeat\.?\b|\bft\.?\b|\bfeaturing\b)\s*",
+    re.IGNORECASE,
+)
 
 
 @dataclass(slots=True)
@@ -55,6 +68,10 @@ class _LyricsCandidate:
     confidence: float
 
 
+class _LrclibRequestError(RuntimeError):
+    pass
+
+
 def handle_lyrics_for_track(
     copy_result: dict[str, Any],
     *,
@@ -63,6 +80,7 @@ def handle_lyrics_for_track(
     input_func: Callable[[str], str] = input,
     request_timeout_seconds: float = DEFAULT_REQUEST_TIMEOUT_SECONDS,
     session: requests.Session | None = None,
+    log_func: Callable[[str], None] | None = print,
 ) -> LyricsResult:
     if lyrics_mode not in SUPPORTED_LYRICS_MODES:
         return LyricsResult(
@@ -73,7 +91,7 @@ def handle_lyrics_for_track(
         )
 
     if lyrics_mode == LYRICS_MODE_NONE:
-        print("[lyrics] Skipping lyric lookup because no-lyrics mode was selected.")
+        _emit_log(log_func, "[lyrics] Skipping lyric lookup because no-lyrics mode was selected.")
         return LyricsResult(status="skipped", lyrics_type=None, source=None)
 
     if copy_result.get("status") != "copied":
@@ -94,7 +112,7 @@ def handle_lyrics_for_track(
         )
 
     if is_instrumental_track(metadata):
-        print("[lyrics] Track marked or detected as instrumental; skipping lyrics.")
+        _emit_log(log_func, "[lyrics] Track marked or detected as instrumental; skipping lyrics.")
         return LyricsResult(status="instrumental", lyrics_type=None, source=None)
 
     lookup_summary = _build_lookup_summary(metadata)
@@ -106,7 +124,8 @@ def handle_lyrics_for_track(
             error="insufficient metadata for lyrics lookup; title and artist are required",
         )
 
-    print(
+    _emit_log(
+        log_func,
         "[lyrics] Looking up lyrics for '{}' by '{}'.".format(
             lookup_summary["title"],
             lookup_summary["artist"],
@@ -118,10 +137,11 @@ def handle_lyrics_for_track(
         prefer_synced=lyrics_mode == LYRICS_MODE_SYNCED,
         request_timeout_seconds=request_timeout_seconds,
         session=session,
+        log_func=log_func,
     )
 
     if lrclib_result.status == "instrumental":
-        print("[lyrics] LRCLIB marked this track as instrumental; skipping lyrics.")
+        _emit_log(log_func, "[lyrics] LRCLIB marked this track as instrumental; skipping lyrics.")
         return lrclib_result
 
     if lyrics_mode == LYRICS_MODE_SYNCED:
@@ -139,7 +159,7 @@ def handle_lyrics_for_track(
                     error=str(exc),
                 )
 
-            print(f"[lyrics] Wrote synced lyrics sidecar: {lrc_path}")
+            _emit_log(log_func, f"[lyrics] Wrote synced lyrics sidecar: {lrc_path}")
             return lrclib_result
 
         if lrclib_result.status == "found" and lrclib_result.plain_lyrics:
@@ -154,9 +174,10 @@ def handle_lyrics_for_track(
                     source=lrclib_result.source,
                     provider_id=lrclib_result.provider_id,
                     confidence=lrclib_result.confidence,
+                    log_func=log_func,
                 )
             if choice == "2":
-                print("[lyrics] User aborted lyrics for this track.")
+                _emit_log(log_func, "[lyrics] User aborted lyrics for this track.")
                 return LyricsResult(status="aborted", lyrics_type=None, source=lrclib_result.source)
 
             genius_result = fetch_from_genius(
@@ -183,6 +204,7 @@ def handle_lyrics_for_track(
             source=lrclib_result.source,
             provider_id=lrclib_result.provider_id,
             confidence=lrclib_result.confidence,
+            log_func=log_func,
         )
 
     if lrclib_result.status == "found" and lrclib_result.synced_lyrics:
@@ -208,9 +230,10 @@ def handle_lyrics_for_track(
                 source=lrclib_result.source,
                 provider_id=lrclib_result.provider_id,
                 confidence=lrclib_result.confidence,
+                log_func=log_func,
             )
 
-        print("[lyrics] User aborted lyrics for this track.")
+        _emit_log(log_func, "[lyrics] User aborted lyrics for this track.")
         return LyricsResult(status="aborted", lyrics_type=None, source=lrclib_result.source)
 
     genius_result = fetch_from_genius(
@@ -225,6 +248,7 @@ def handle_lyrics_for_track(
             source=genius_result.source,
             provider_id=genius_result.provider_id,
             confidence=genius_result.confidence,
+            log_func=log_func,
         )
     return genius_result if genius_result.status != "not_found" else lrclib_result
 
@@ -237,18 +261,33 @@ def handle_lyrics_for_tracks(
     input_func: Callable[[str], str] = input,
     request_timeout_seconds: float = DEFAULT_REQUEST_TIMEOUT_SECONDS,
     session: requests.Session | None = None,
+    log_func: Callable[[str], None] | None = print,
 ) -> list[LyricsResult]:
-    return [
-        handle_lyrics_for_track(
-            copy_result,
-            lyrics_mode=lyrics_mode,
-            genius_access_token=genius_access_token,
-            input_func=input_func,
-            request_timeout_seconds=request_timeout_seconds,
-            session=session,
-        )
-        for copy_result in copy_results
-    ]
+    copy_result_list = list(copy_results)
+    active_session = session or requests.Session()
+    close_session = session is None
+    try:
+        iterator: Iterable[dict[str, Any]]
+        if lyrics_mode == LYRICS_MODE_NONE:
+            iterator = copy_result_list
+        else:
+            iterator = tqdm(copy_result_list, desc="Lyrics processed", unit="file")
+
+        return [
+            handle_lyrics_for_track(
+                copy_result,
+                lyrics_mode=lyrics_mode,
+                genius_access_token=genius_access_token,
+                input_func=input_func,
+                request_timeout_seconds=request_timeout_seconds,
+                session=active_session,
+                log_func=log_func,
+            )
+            for copy_result in iterator
+        ]
+    finally:
+        if close_session:
+            active_session.close()
 
 
 def fetch_from_lrclib(
@@ -257,6 +296,7 @@ def fetch_from_lrclib(
     prefer_synced: bool,
     request_timeout_seconds: float = DEFAULT_REQUEST_TIMEOUT_SECONDS,
     session: requests.Session | None = None,
+    log_func: Callable[[str], None] | None = print,
 ) -> LyricsResult:
     if is_instrumental_track(metadata):
         return LyricsResult(status="instrumental", lyrics_type=None, source="lrclib")
@@ -276,16 +316,23 @@ def fetch_from_lrclib(
 
     active_session = session or requests.Session()
     close_session = session is None
+    exact_error: str | None = None
     try:
-        candidate = _fetch_lrclib_candidate_exact(
-            active_session,
-            title=title,
-            artist=artist,
-            album=album,
-            duration_seconds=duration_seconds,
-            metadata=metadata,
-            request_timeout_seconds=request_timeout_seconds,
-        )
+        try:
+            candidate = _fetch_lrclib_candidate_exact(
+                active_session,
+                title=title,
+                artist=artist,
+                album=album,
+                duration_seconds=duration_seconds,
+                metadata=metadata,
+                request_timeout_seconds=request_timeout_seconds,
+            )
+        except _LrclibRequestError as exc:
+            exact_error = str(exc)
+            candidate = None
+            _emit_log(log_func, f"[lyrics] {exact_error}. Falling back to LRCLIB /search.")
+
         if candidate is None:
             candidate = _fetch_lrclib_candidate_search(
                 active_session,
@@ -296,44 +343,32 @@ def fetch_from_lrclib(
                 metadata=metadata,
                 request_timeout_seconds=request_timeout_seconds,
             )
-    except requests.Timeout:
-        return LyricsResult(
-            status="error",
-            lyrics_type=None,
-            source="lrclib",
-            error="LRCLIB request timed out",
+    except _LrclibRequestError as exc:
+        search_error = str(exc)
+        combined_error = (
+            f"{exact_error}; fallback failed: {search_error}"
+            if exact_error is not None
+            else search_error
         )
-    except requests.ConnectionError:
         return LyricsResult(
             status="error",
             lyrics_type=None,
             source="lrclib",
-            error="unable to connect to LRCLIB",
-        )
-    except requests.HTTPError as exc:
-        return LyricsResult(
-            status="error",
-            lyrics_type=None,
-            source="lrclib",
-            error=_classify_http_error("LRCLIB", exc.response.status_code if exc.response else None),
-        )
-    except requests.RequestException as exc:
-        return LyricsResult(
-            status="error",
-            lyrics_type=None,
-            source="lrclib",
-            error=f"LRCLIB request failed: {exc}",
+            error=combined_error,
         )
     finally:
         if close_session:
             active_session.close()
 
     if candidate is None:
+        not_found_error = "no confident LRCLIB lyrics match found"
+        if exact_error is not None:
+            not_found_error = f"{not_found_error} after exact lookup failed: {exact_error}"
         return LyricsResult(
             status="not_found",
             lyrics_type=None,
             source="lrclib",
-            error="no confident LRCLIB lyrics match found",
+            error=not_found_error,
         )
 
     if candidate.instrumental:
@@ -604,6 +639,14 @@ def _fetch_lrclib_candidate_exact(
         f"{LRCLIB_BASE_URL}/get",
         params=params,
         request_timeout_seconds=request_timeout_seconds,
+        default_read_timeout_seconds=DEFAULT_LRCLIB_GET_READ_TIMEOUT_SECONDS,
+        max_attempts=DEFAULT_LRCLIB_GET_MAX_ATTEMPTS,
+        request_label=_build_lrclib_request_label(
+            "/get",
+            title=title,
+            artist=artist,
+            album=album,
+        ),
     )
     if not isinstance(payload, dict):
         return None
@@ -636,6 +679,14 @@ def _fetch_lrclib_candidate_search(
         f"{LRCLIB_BASE_URL}/search",
         params=params,
         request_timeout_seconds=request_timeout_seconds,
+        default_read_timeout_seconds=DEFAULT_LRCLIB_SEARCH_READ_TIMEOUT_SECONDS,
+        max_attempts=DEFAULT_LRCLIB_SEARCH_MAX_ATTEMPTS,
+        request_label=_build_lrclib_request_label(
+            "/search",
+            title=title,
+            artist=artist,
+            album=album,
+        ),
     )
     if not isinstance(payload, list):
         return None
@@ -701,6 +752,7 @@ def _embed_plain_lyrics_result(
     source: str | None,
     provider_id: str | None,
     confidence: float | None,
+    log_func: Callable[[str], None] | None = print,
 ) -> LyricsResult:
     updated_metadata = dict(copy_result.get("metadata") or {})
     updated_metadata["lyrics"] = plain_lyrics
@@ -719,7 +771,7 @@ def _embed_plain_lyrics_result(
             error=tag_write_result.get("reason") or "failed to write lyrics to audio metadata",
         )
 
-    print("[lyrics] Embedded unsynced lyrics into audio metadata.")
+    _emit_log(log_func, "[lyrics] Embedded unsynced lyrics into audio metadata.")
     return LyricsResult(
         status="found",
         lyrics_type="unsynced",
@@ -728,6 +780,11 @@ def _embed_plain_lyrics_result(
         provider_id=provider_id,
         confidence=confidence,
     )
+
+
+def _emit_log(log_func: Callable[[str], None] | None, message: str) -> None:
+    if log_func is not None:
+        log_func(message)
 
 
 def _score_text_candidate(
@@ -824,23 +881,123 @@ def _get_json(
     *,
     params: dict[str, Any],
     request_timeout_seconds: float,
+    default_read_timeout_seconds: float,
+    max_attempts: int,
+    request_label: str,
 ) -> Any:
-    response = session.get(
-        url,
-        params=params,
-        timeout=request_timeout_seconds,
-        headers={
-            "Accept": "application/json",
-            "User-Agent": LRCLIB_USER_AGENT,
-        },
+    timeout = _build_lrclib_timeout(
+        request_timeout_seconds,
+        default_read_timeout_seconds=default_read_timeout_seconds,
+    )
+    for attempt in range(1, max_attempts + 1):
+        try:
+            response = session.get(
+                url,
+                params=params,
+                timeout=timeout,
+                headers={
+                    "Accept": "application/json",
+                    "User-Agent": LRCLIB_USER_AGENT,
+                },
+            )
+            if response.status_code == 404:
+                return None
+            if response.status_code in LRCLIB_RETRYABLE_STATUS_CODES and attempt < max_attempts:
+                _sleep_lrclib_retry_delay(attempt)
+                continue
+            response.raise_for_status()
+            return response.json()
+        except requests.ConnectTimeout as exc:
+            if attempt < max_attempts:
+                _sleep_lrclib_retry_delay(attempt)
+                continue
+            raise _LrclibRequestError(
+                f"{request_label} connect timed out after {timeout[0]:.1f}s "
+                f"(attempts={max_attempts})"
+            ) from exc
+        except requests.ReadTimeout as exc:
+            if attempt < max_attempts:
+                _sleep_lrclib_retry_delay(attempt)
+                continue
+            raise _LrclibRequestError(
+                f"{request_label} read timed out after {timeout[1]:.1f}s "
+                f"(attempts={max_attempts})"
+            ) from exc
+        except requests.Timeout as exc:
+            if attempt < max_attempts:
+                _sleep_lrclib_retry_delay(attempt)
+                continue
+            raise _LrclibRequestError(
+                f"{request_label} timed out after connect={timeout[0]:.1f}s read={timeout[1]:.1f}s "
+                f"(attempts={max_attempts})"
+            ) from exc
+        except requests.ConnectionError as exc:
+            if attempt < max_attempts:
+                _sleep_lrclib_retry_delay(attempt)
+                continue
+            raise _LrclibRequestError(
+                f"{request_label} failed to connect (attempts={max_attempts})"
+            ) from exc
+        except requests.HTTPError as exc:
+            status_code = exc.response.status_code if exc.response else None
+            if status_code in LRCLIB_RETRYABLE_STATUS_CODES and attempt < max_attempts:
+                _sleep_lrclib_retry_delay(attempt)
+                continue
+            if status_code is not None:
+                raise _LrclibRequestError(
+                    _classify_http_error("LRCLIB", status_code)
+                    + f" [{request_label}; attempts={attempt}]"
+                ) from exc
+            raise _LrclibRequestError(
+                f"{request_label} failed with an HTTP error (attempts={attempt})"
+            ) from exc
+        except requests.RequestException as exc:
+            raise _LrclibRequestError(
+                f"{request_label} failed: {exc.__class__.__name__}: {exc}"
+            ) from exc
+
+    raise _LrclibRequestError(f"{request_label} failed after {max_attempts} attempts")
+
+
+def _sleep_lrclib_retry_delay(attempt: int) -> None:
+    time.sleep(DEFAULT_LRCLIB_RETRY_BACKOFF_SECONDS * attempt)
+
+
+def _build_lrclib_timeout(
+    request_timeout_seconds: float,
+    *,
+    default_read_timeout_seconds: float,
+) -> tuple[float, float]:
+    return (
+        DEFAULT_LRCLIB_CONNECT_TIMEOUT_SECONDS,
+        _resolve_lrclib_read_timeout(
+            request_timeout_seconds,
+            default_read_timeout_seconds=default_read_timeout_seconds,
+        ),
     )
 
-    if response.status_code == 404:
-        return None
-    if response.status_code in {403, 429}:
-        response.raise_for_status()
-    response.raise_for_status()
-    return response.json()
+
+def _resolve_lrclib_read_timeout(
+    request_timeout_seconds: float,
+    *,
+    default_read_timeout_seconds: float,
+) -> float:
+    if request_timeout_seconds == DEFAULT_REQUEST_TIMEOUT_SECONDS:
+        return default_read_timeout_seconds
+    return max(1.0, request_timeout_seconds)
+
+
+def _build_lrclib_request_label(
+    endpoint: str,
+    *,
+    title: str,
+    artist: str,
+    album: str | None,
+) -> str:
+    label = f"LRCLIB {endpoint} for '{title}' by '{artist}'"
+    if album:
+        return f"{label} on '{album}'"
+    return label
 
 
 def _build_lookup_summary(metadata: dict[str, Any]) -> dict[str, str | float | None]:
@@ -871,8 +1028,17 @@ def _best_artist_name(metadata: dict[str, Any]) -> str | None:
         cleaned_artists = [_clean_string(value) for value in artists]
         joined_artists = [value for value in cleaned_artists if value]
         if joined_artists:
-            return "; ".join(joined_artists)
-    return _clean_string(metadata.get("artist"))
+            return _normalize_lyrics_artist_name(joined_artists[0])
+    return _normalize_lyrics_artist_name(_clean_string(metadata.get("artist")))
+
+
+def _normalize_lyrics_artist_name(value: str | None) -> str | None:
+    cleaned_value = _clean_string(value)
+    if cleaned_value is None:
+        return None
+
+    primary_artist = ARTIST_SPLIT_PATTERN.split(cleaned_value, maxsplit=1)[0]
+    return _clean_string(primary_artist) or cleaned_value
 
 
 def _string_similarity(expected: Any, actual: Any) -> float:

@@ -6,7 +6,7 @@ except ImportError:
     def load_dotenv() -> bool:
         return False
 
-load_dotenv()
+load_dotenv(override=True)
 
 ACOUSTID_API_KEY = os.getenv("ACOUSTID_API_KEY")
 GENIUS_ACCESS_TOKEN = os.getenv("GENIUS_ACCESS_TOKEN")

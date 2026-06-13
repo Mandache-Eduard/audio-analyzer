@@ -18,7 +18,7 @@ import sys
 
 LYRICS_MODE_UNSYNCED = "lyrics-unsynced"
 LYRICS_MODE_SYNCED = "lyrics-synced"
-LYRICS_MODE_NONE = "no-lyrics"
+LYRICS_MODE_NONE = "lyrics-none"
 SUPPORTED_LYRICS_MODES = frozenset(
     {
         LYRICS_MODE_UNSYNCED,
@@ -34,14 +34,14 @@ def main():
         return
 
     elif sys.argv[1] == "help":
-        print("""Usage: py main.py <analyse|group> "<path_to_file_or_folder>" [lyrics_mode]""")
+        print("""Usage: py main.py <analyse|group> [lyrics_mode] "<path_to_file_or_folder>" """)
         print("Examples:")
         print("""  py main.py analyse "X:\\path\\to\\file.flac" """)
         print("""  py main.py analyse "X:\\path\\to\\folder" """)
         print("""  py main.py group "X:\\path\\to\\folder" """)
-        print("""  py main.py group "X:\\path\\to\\folder" no-lyrics """)
-        print("""  py main.py group "X:\\path\\to\\folder" lyrics-unsynced """)
-        print("""  py main.py group "X:\\path\\to\\folder" lyrics-synced """)
+        print("""  py main.py group lyrics-none "X:\\path\\to\\folder" """)
+        print("""  py main.py group lyrics-unsynced "X:\\path\\to\\folder" """)
+        print("""  py main.py group lyrics-synced "X:\\path\\to\\folder" """)
         print("Supported lyrics modes: {}".format(", ".join(sorted(SUPPORTED_LYRICS_MODES))))
         return
 
@@ -51,7 +51,6 @@ def main():
 
     # 1. Get action and target path from command-line arguments and determine running mode
     action = sys.argv[1].lower()
-    path = sys.argv[2]
     lyrics_mode = LYRICS_MODE_NONE
 
     if action == "analyse":
@@ -59,6 +58,7 @@ def main():
             print("Analyse mode does not accept a lyrics mode argument.")
             return
 
+        path = sys.argv[2]
         from audio_analysis.analyse_modes import analyse_single_file, analyse_folder_batch
 
         if os.path.isfile(path) and path.lower().endswith(".flac"):
@@ -74,8 +74,10 @@ def main():
             print("Too many arguments for group mode - check usage using 'py main.py help'")
             return
 
-        if len(sys.argv) >= 4:
-            lyrics_mode = sys.argv[3].strip().lower()
+        if len(sys.argv) == 3:
+            path = sys.argv[2]
+        else:
+            lyrics_mode = sys.argv[2].strip().lower()
             if lyrics_mode not in SUPPORTED_LYRICS_MODES:
                 print(
                     "Invalid lyrics mode - use one of: {}".format(
@@ -83,6 +85,7 @@ def main():
                     )
                 )
                 return
+            path = sys.argv[3]
 
         if os.path.isdir(path):
             from metadata_enrichment_and_file_grouping.group_mode import (

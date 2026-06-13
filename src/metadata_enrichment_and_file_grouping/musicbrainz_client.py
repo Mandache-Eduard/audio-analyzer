@@ -56,7 +56,17 @@ class MusicBrainzClient:
         try:
             return self._musicbrainzngs.get_release_by_id(
                 release_mbid,
-                includes=["artists", "recordings", "release-groups", "media", "labels"],
+                includes=[
+                    "artists",
+                    "recordings",
+                    "release-groups",
+                    "media",
+                    "labels",
+                    "tags",
+                    "url-rels",
+                    "artist-rels",
+                    "recording-level-rels",
+                ],
             )
         except Exception as exc:
             raise RuntimeError(

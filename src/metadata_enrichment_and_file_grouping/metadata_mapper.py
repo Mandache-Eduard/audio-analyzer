@@ -47,6 +47,7 @@ def map_cluster_to_release_metadata(
     original_year = original_date[:4] if original_date and len(original_date) >= 4 else None
     label_names, catalog_numbers = _extract_label_info(release.get("label-info-list"))
     release_genre = _extract_genre(release) or _extract_genre(release.get("release-group"))
+    release_publisher = _join_tag_values(label_names)
     release_url = _extract_first_url(release)
 
     release_tracks = _extract_release_tracks(release)
@@ -73,6 +74,7 @@ def map_cluster_to_release_metadata(
         label_names=label_names,
         catalog_numbers=catalog_numbers,
         release_genre=release_genre,
+        release_publisher=release_publisher,
         release_url=release_url,
     )
 
@@ -95,7 +97,7 @@ def map_cluster_to_release_metadata(
         "barcode": _clean_string(release.get("barcode")),
         "asin": _clean_string(release.get("asin")),
         "genre": release_genre,
-        "publisher": None,
+        "publisher": release_publisher,
         "url": release_url,
         "label_names": label_names,
         "catalog_numbers": catalog_numbers,
@@ -315,6 +317,7 @@ def _match_local_results_to_release_tracks(
     label_names: list[str],
     catalog_numbers: list[str],
     release_genre: str | None,
+    release_publisher: str | None,
     release_url: str | None,
 ) -> list[dict[str, Any]]:
     unmatched_release_indices = set(range(len(release_tracks)))
@@ -361,6 +364,7 @@ def _match_local_results_to_release_tracks(
                 label_names=label_names,
                 catalog_numbers=catalog_numbers,
                 release_genre=release_genre,
+                release_publisher=release_publisher,
                 release_url=release_url,
             )
         )
@@ -423,6 +427,7 @@ def _build_matched_track_mapping(
     label_names: list[str],
     catalog_numbers: list[str],
     release_genre: str | None,
+    release_publisher: str | None,
     release_url: str | None,
 ) -> dict[str, Any]:
     original_path = Path(resolved_result["original_path"])
@@ -466,7 +471,7 @@ def _build_matched_track_mapping(
         "script": script,
         "barcode": release_barcode,
         "asin": release_asin,
-        "publisher": release_track["publisher"],
+        "publisher": release_track["publisher"] or release_publisher,
         "url": release_track["url"] or release_url,
         "originalartist": release_track["originalartist"],
         "remixer": release_track["remixer"],
@@ -707,6 +712,13 @@ def _extract_label_info(label_info_list: Any) -> tuple[list[str], list[str]]:
     return label_names, catalog_numbers
 
 
+def _join_tag_values(values: list[str]) -> str | None:
+    deduplicated_values = _deduplicate_strings(values)
+    if not deduplicated_values:
+        return None
+    return "; ".join(deduplicated_values)
+
+
 def _extract_genre(entity: Any) -> str | None:
     if not isinstance(entity, dict):
         return None
@@ -808,4 +820,12 @@ def _extract_relation_url_target(relation: dict[str, Any]) -> str | None:
         return _clean_string(url_target.get("resource"))
     if isinstance(url_target, str):
         return _clean_string(url_target)
-    return _clean_string(relation.get("target"))
+
+    relation_target_type = _clean_string(relation.get("target-type"))
+    if relation_target_type is not None and relation_target_type.casefold() != "url":
+        return None
+
+    target = _clean_string(relation.get("target"))
+    if target and (target.startswith("http://") or target.startswith("https://")):
+        return target
+    return None
