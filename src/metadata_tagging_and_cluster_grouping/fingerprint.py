@@ -9,10 +9,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
+from config import LOCAL_FPCALC_PATH
 from tqdm import tqdm
 
 LOGGER = logging.getLogger(__name__)
-LOCAL_FPCALC_PATH = Path(__file__).resolve().parents[2] / "tools" / "fpcalc.exe"
 
 
 @dataclass(frozen=True, slots=True)

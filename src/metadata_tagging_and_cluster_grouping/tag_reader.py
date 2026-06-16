@@ -6,7 +6,7 @@ from typing import Any, Iterable
 
 from mutagen import File as MutagenFile
 
-from metadata_enrichment_and_file_grouping.scanner import ScannedAudioFile
+from metadata_tagging_and_cluster_grouping.file_scanner import ScannedAudioFile
 
 @dataclass(frozen=True, slots=True)
 class ExistingAudioMetadata:

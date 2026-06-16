@@ -11,3 +11,5 @@ TAGS.txt
 METADATA_FORMATS.txt
 /src/sorted_files
 /tools/ffmpeg/bin
+/.venv-demucs-3.11
+/models

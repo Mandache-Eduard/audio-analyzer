@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from typing import Any, Iterable
 
-from metadata_enrichment_and_file_grouping.fingerprint import FingerprintResult
-from metadata_enrichment_and_file_grouping.tag_reader import ExistingAudioMetadata
+from metadata_tagging_and_cluster_grouping.fingerprint import FingerprintResult
+from metadata_tagging_and_cluster_grouping.tag_reader import ExistingAudioMetadata
 
 
 def resolve_identifier(

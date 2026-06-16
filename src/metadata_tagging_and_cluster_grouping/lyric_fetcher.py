@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import re
+import tempfile
 import time
 from dataclasses import dataclass
 from difflib import SequenceMatcher
@@ -11,18 +12,26 @@ from typing import Any, Callable, Iterable
 import requests
 from tqdm import tqdm
 
-from metadata_enrichment_and_file_grouping.tag_writer import write_tags_to_copied_file
+from metadata_tagging_and_cluster_grouping.tag_writer import write_tags_to_copied_file
 
 LYRICS_MODE_UNSYNCED = "lyrics-unsynced"
 LYRICS_MODE_SYNCED = "lyrics-synced"
-LYRICS_MODE_NONE = "no-lyrics"
+LYRICS_MODE_NONE = "lyrics-none"
+LEGACY_LYRICS_MODE_NONE = "no-lyrics"
 SUPPORTED_LYRICS_MODES = frozenset(
     {
         LYRICS_MODE_UNSYNCED,
         LYRICS_MODE_SYNCED,
         LYRICS_MODE_NONE,
+        LEGACY_LYRICS_MODE_NONE,
     }
 )
+LOCAL_TRANSCRIPTION_DEVICE = "auto"
+LOCAL_TRANSCRIPTION_MODELS = {
+    "ggml-large-v2": "ggml-large-v2.bin",
+    "ggml-large-v3": "ggml-large-v3.bin",
+    "ggml-large-v3-turbo": "ggml-large-v3-turbo.bin",
+}
 
 LRCLIB_BASE_URL = "https://lrclib.net/api"
 DEFAULT_REQUEST_TIMEOUT_SECONDS = 20.0
@@ -82,6 +91,7 @@ def handle_lyrics_for_track(
     session: requests.Session | None = None,
     log_func: Callable[[str], None] | None = print,
 ) -> LyricsResult:
+    lyrics_mode = _normalize_lyrics_mode(lyrics_mode)
     if lyrics_mode not in SUPPORTED_LYRICS_MODES:
         return LyricsResult(
             status="error",
@@ -263,6 +273,7 @@ def handle_lyrics_for_tracks(
     session: requests.Session | None = None,
     log_func: Callable[[str], None] | None = print,
 ) -> list[LyricsResult]:
+    lyrics_mode = _normalize_lyrics_mode(lyrics_mode)
     copy_result_list = list(copy_results)
     active_session = session or requests.Session()
     close_session = session is None
@@ -288,6 +299,64 @@ def handle_lyrics_for_tracks(
     finally:
         if close_session:
             active_session.close()
+
+
+def transcribe_unmatched_tracks(
+    copy_results: Iterable[dict[str, Any]],
+    lyric_results: Iterable[LyricsResult],
+    *,
+    lyrics_mode: str,
+    input_func: Callable[[str], str] = input,
+    log_func: Callable[[str], None] | None = print,
+) -> list[LyricsResult]:
+    normalized_lyrics_mode = _normalize_lyrics_mode(lyrics_mode)
+    lyric_result_list = list(lyric_results)
+    if normalized_lyrics_mode == LYRICS_MODE_NONE:
+        return lyric_result_list
+
+    copy_result_list = list(copy_results)
+    unmatched_rows = [
+        (index, copy_result, lyric_result)
+        for index, (copy_result, lyric_result) in enumerate(zip(copy_result_list, lyric_result_list))
+        if lyric_result.status == "not_found"
+    ]
+    if not unmatched_rows:
+        return lyric_result_list
+
+    print("")
+    print(f"No matching lyrics were returned for: {len(unmatched_rows)} files.")
+    print("Do you want to attempt to transcribe them using local AI models? Y/N")
+    if not _prompt_yes_no(input_func=input_func):
+        _emit_log(log_func, "[lyrics] Local transcription fallback was declined by the user.")
+        return lyric_result_list
+
+    selected_model_name = _prompt_for_local_transcription_model(input_func=input_func)
+    language = _prompt_for_transcription_language(input_func=input_func)
+    _validate_local_transcription_runtime(selected_model_name)
+    selected_model_filename = LOCAL_TRANSCRIPTION_MODELS[selected_model_name]
+
+    _emit_log(
+        log_func,
+        "[lyrics] Starting local transcription fallback for {} file(s) using {} (language: {}, device: {}).".format(
+            len(unmatched_rows),
+            selected_model_filename,
+            language,
+            LOCAL_TRANSCRIPTION_DEVICE,
+        ),
+    )
+
+    updated_results = list(lyric_result_list)
+    iterator = tqdm(unmatched_rows, desc="Lyrics transcribed", unit="file")
+    for index, copy_result, _lyric_result in iterator:
+        updated_results[index] = transcribe_lyrics_for_track(
+            copy_result,
+            lyrics_mode=normalized_lyrics_mode,
+            model_name=selected_model_name,
+            language=language,
+            device=LOCAL_TRANSCRIPTION_DEVICE,
+            log_func=log_func,
+        )
+    return updated_results
 
 
 def fetch_from_lrclib(
@@ -782,9 +851,229 @@ def _embed_plain_lyrics_result(
     )
 
 
+def transcribe_lyrics_for_track(
+    copy_result: dict[str, Any],
+    *,
+    lyrics_mode: str,
+    model_name: str,
+    language: str,
+    device: str,
+    log_func: Callable[[str], None] | None = print,
+) -> LyricsResult:
+    normalized_lyrics_mode = _normalize_lyrics_mode(lyrics_mode)
+    if normalized_lyrics_mode not in {LYRICS_MODE_UNSYNCED, LYRICS_MODE_SYNCED}:
+        return LyricsResult(
+            status="error",
+            lyrics_type=None,
+            source=None,
+            error=f"unsupported transcription lyrics mode: {lyrics_mode}",
+        )
+
+    selected_model_filename = LOCAL_TRANSCRIPTION_MODELS.get(model_name)
+    if selected_model_filename is None:
+        return LyricsResult(
+            status="error",
+            lyrics_type=None,
+            source=None,
+            error=f"unsupported local transcription model: {model_name}",
+        )
+
+    if copy_result.get("status") != "copied":
+        return LyricsResult(
+            status="skipped",
+            lyrics_type=None,
+            source=None,
+            error=copy_result.get("reason") or "copy step did not produce a final file",
+        )
+
+    copied_path = Path(str(copy_result.get("copied_path") or "")).resolve()
+    if not copied_path.is_file():
+        return LyricsResult(
+            status="error",
+            lyrics_type=None,
+            source=None,
+            error=f"copied track was not found for local transcription: {copied_path}",
+        )
+
+    metadata = copy_result.get("metadata")
+    if not isinstance(metadata, dict):
+        return LyricsResult(
+            status="error",
+            lyrics_type=None,
+            source=None,
+            error="missing metadata payload for local transcription",
+        )
+
+    from audio_splitting_and_lyrics_transcription import audio_worker
+
+    model_path = audio_worker.WHISPER_MODELS_ROOT / selected_model_filename
+    source_label = f"whisper.cpp:{selected_model_filename}"
+    track_label = _format_track_label(metadata, copied_path)
+    _emit_log(log_func, f"[lyrics] Transcribing local lyrics for {track_label}.")
+
+    try:
+        transcribed_text: str | None = None
+        with tempfile.TemporaryDirectory(prefix="flac_auth_group_lyrics_") as temp_dir:
+            temp_root = Path(temp_dir)
+            vocals_source_path = audio_worker._run_audio_separator_single_stem(
+                input_path=copied_path,
+                output_root=temp_root,
+                model_filename=audio_worker.KIM_VOCAL_2_MODEL_FILENAME,
+                single_stem="Vocals",
+                requested_device=device,
+            )
+
+            transcription_mode = "timestamped" if normalized_lyrics_mode == LYRICS_MODE_SYNCED else "plain"
+            if transcription_mode == "timestamped":
+                lyrics_output_path = copied_path.with_suffix(".lrc")
+            else:
+                lyrics_output_path = temp_root / "lyrics.txt"
+
+            lyrics_result = audio_worker._write_lyrics(
+                vocals_source_path,
+                lyrics_output_path,
+                transcription_mode,
+                language,
+                device,
+                model_path,
+                lambda message: _emit_log(log_func, f"[lyrics] {track_label}: {message}"),
+            )
+            transcribed_text = lyrics_output_path.read_text(encoding="utf-8").strip()
+    except Exception as exc:
+        return LyricsResult(
+            status="error",
+            lyrics_type="synced" if normalized_lyrics_mode == LYRICS_MODE_SYNCED else "unsynced",
+            source=source_label,
+            error=str(exc),
+        )
+
+    warning = lyrics_result.get("warning")
+    if warning:
+        _emit_log(log_func, f"[lyrics] {track_label}: {warning}")
+    if not transcribed_text:
+        return LyricsResult(
+            status="error",
+            lyrics_type="synced" if normalized_lyrics_mode == LYRICS_MODE_SYNCED else "unsynced",
+            source=source_label,
+            error="local transcription produced an empty lyrics result",
+        )
+
+    if normalized_lyrics_mode == LYRICS_MODE_SYNCED:
+        synced_lyrics = transcribed_text or ""
+        _emit_log(log_func, f"[lyrics] Wrote local synced lyrics sidecar: {lyrics_output_path}")
+        return LyricsResult(
+            status="found",
+            lyrics_type="synced",
+            source=source_label,
+            synced_lyrics=synced_lyrics,
+        )
+
+    plain_lyrics = transcribed_text
+    return _embed_plain_lyrics_result(
+        copy_result,
+        plain_lyrics,
+        source=source_label,
+        provider_id=selected_model_filename,
+        confidence=None,
+        log_func=log_func,
+    )
+
+
 def _emit_log(log_func: Callable[[str], None] | None, message: str) -> None:
     if log_func is not None:
         log_func(message)
+
+
+def _normalize_lyrics_mode(lyrics_mode: str) -> str:
+    normalized_value = str(lyrics_mode).strip().lower()
+    if normalized_value == LEGACY_LYRICS_MODE_NONE:
+        return LYRICS_MODE_NONE
+    return normalized_value
+
+
+def _prompt_yes_no(
+    *,
+    input_func: Callable[[str], str] = input,
+) -> bool:
+    while True:
+        choice = input_func("> ").strip().lower()
+        if choice in {"y", "yes"}:
+            return True
+        if choice in {"n", "no"}:
+            return False
+        print("Invalid selection. Please choose Y or N.")
+
+
+def _prompt_for_local_transcription_model(
+    *,
+    input_func: Callable[[str], str] = input,
+) -> str:
+    ordered_model_names = list(LOCAL_TRANSCRIPTION_MODELS)
+    print("Please select the model you wish to use:")
+    for index, model_name in enumerate(ordered_model_names, start=1):
+        print(f"{index}. {model_name}")
+
+    valid_choices = {str(index): model_name for index, model_name in enumerate(ordered_model_names, start=1)}
+    valid_choices.update({model_name: model_name for model_name in ordered_model_names})
+
+    while True:
+        choice = input_func("> ").strip().lower()
+        selected_model_name = valid_choices.get(choice)
+        if selected_model_name is not None:
+            return selected_model_name
+        print(
+            "Invalid selection. Please choose one of: {}.".format(
+                ", ".join(ordered_model_names)
+            )
+        )
+
+
+def _prompt_for_transcription_language(
+    *,
+    input_func: Callable[[str], str] = input,
+) -> str:
+    print("Could you provide the language of the lyrics?")
+    print("Example:")
+    print("English - en,")
+    print("Romanian - ro,")
+    print("etc.")
+    while True:
+        language = input_func("> ").strip().lower()
+        if language:
+            return language
+        print("Language is required.")
+
+
+def _validate_local_transcription_runtime(model_name: str) -> None:
+    from audio_splitting_and_lyrics_transcription import audio_worker
+
+    if model_name not in LOCAL_TRANSCRIPTION_MODELS:
+        raise RuntimeError(f"Unsupported local transcription model: {model_name}")
+
+    model_path = audio_worker.WHISPER_MODELS_ROOT / LOCAL_TRANSCRIPTION_MODELS[model_name]
+    if not audio_worker.FFMPEG_PATH.is_file():
+        raise FileNotFoundError(f"Local FFmpeg was not found at: {audio_worker.FFMPEG_PATH}")
+    if not audio_worker.FFPROBE_PATH.is_file():
+        raise FileNotFoundError(f"Local FFprobe was not found at: {audio_worker.FFPROBE_PATH}")
+    if not audio_worker.AUDIO_SEPARATOR_EXE_PATH.is_file():
+        raise FileNotFoundError(
+            f"audio-separator executable was not found at: {audio_worker.AUDIO_SEPARATOR_EXE_PATH}"
+        )
+    if not audio_worker.AUDIO_SEPARATOR_MODELS_ROOT.is_dir():
+        raise FileNotFoundError(
+            f"Audio-separator model folder does not exist: {audio_worker.AUDIO_SEPARATOR_MODELS_ROOT}"
+        )
+    if not model_path.is_file():
+        raise FileNotFoundError(f"Whisper model was not found: {model_path}")
+    audio_worker._resolve_whispercpp_runtime(requested_device=LOCAL_TRANSCRIPTION_DEVICE)
+
+
+def _format_track_label(metadata: dict[str, Any], copied_path: Path) -> str:
+    title = _clean_string(metadata.get("title"))
+    artist = _best_artist_name(metadata)
+    if title and artist:
+        return f"'{title}' by '{artist}'"
+    return copied_path.name
 
 
 def _score_text_candidate(

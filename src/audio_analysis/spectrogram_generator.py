@@ -6,7 +6,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from tqdm import tqdm
 
-FFMPEG_PATH = Path(__file__).resolve().parents[2] / "tools" / "ffmpeg" / "bin" / "ffmpeg.exe"
+from config import FFMPEG_PATH
 
 def ffmpeg_works() -> bool:
     if not FFMPEG_PATH.is_file():

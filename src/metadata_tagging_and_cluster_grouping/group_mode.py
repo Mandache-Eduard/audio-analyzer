@@ -8,30 +8,31 @@ from config import (
     MUSICBRAINZ_APP_VERSION,
     MUSICBRAINZ_CONTACT_EMAIL,
 )
-from metadata_enrichment_and_file_grouping.acoustid_client import AcoustIdClient
-from metadata_enrichment_and_file_grouping.album_clusterer import cluster_resolved_tracks
-from metadata_enrichment_and_file_grouping.copier import copy_planned_files
-from metadata_enrichment_and_file_grouping.file_planner import (
+from metadata_tagging_and_cluster_grouping.acoustid_client import AcoustIdClient
+from metadata_tagging_and_cluster_grouping.album_clusterer import cluster_resolved_tracks
+from metadata_tagging_and_cluster_grouping.copier import copy_planned_files
+from metadata_tagging_and_cluster_grouping.output_planner import (
     DEFAULT_OUTPUT_ROOT,
     plan_release_files_batch,
 )
-from metadata_enrichment_and_file_grouping.identifier_resolver import resolve_identifier
-from metadata_enrichment_and_file_grouping.fingerprint import FingerprintService
-from metadata_enrichment_and_file_grouping.metadata_mapper import (
+from metadata_tagging_and_cluster_grouping.identifier_resolver import resolve_identifier
+from metadata_tagging_and_cluster_grouping.fingerprint import FingerprintService
+from metadata_tagging_and_cluster_grouping.metadata_mapper import (
     map_cluster_to_release_metadata,
 )
-from metadata_enrichment_and_file_grouping.lyric_tagger import (
+from metadata_tagging_and_cluster_grouping.lyric_fetcher import (
     LYRICS_MODE_NONE,
     handle_lyrics_for_tracks,
+    transcribe_unmatched_tracks,
 )
-from metadata_enrichment_and_file_grouping.musicbrainz_client import MusicBrainzClient
-from metadata_enrichment_and_file_grouping.release_selector import (
+from metadata_tagging_and_cluster_grouping.musicbrainz_client import MusicBrainzClient
+from metadata_tagging_and_cluster_grouping.release_selector import (
     select_release_for_group,
     summarize_selected_release,
 )
-from metadata_enrichment_and_file_grouping.scanner import scan_audio_files
-from metadata_enrichment_and_file_grouping.tag_reader import read_existing_metadata
-from metadata_enrichment_and_file_grouping.tag_writer import write_tags_to_copied_files
+from metadata_tagging_and_cluster_grouping.file_scanner import scan_audio_files
+from metadata_tagging_and_cluster_grouping.tag_reader import read_existing_metadata
+from metadata_tagging_and_cluster_grouping.tag_writer import write_tags_to_copied_files
 from tqdm import tqdm
 
 
@@ -44,6 +45,8 @@ def group_folder_batch(
     lyrics_mode: str = LYRICS_MODE_NONE,
     genius_access_token: str | None = GENIUS_ACCESS_TOKEN,
 ):
+    output_root = Path(folder_path) / DEFAULT_OUTPUT_ROOT
+
     with tqdm(desc="File discovery", unit="dir") as discovery_progress:
         scanned_files = scan_audio_files(
             folder_path,
@@ -108,7 +111,7 @@ def group_folder_batch(
             }
         )
 
-    planned_files = plan_release_files_batch(mapped_releases)
+    planned_files = plan_release_files_batch(mapped_releases, output_root=output_root)
     copy_results = copy_planned_files(planned_files)
     tag_write_results = write_tags_to_copied_files(copy_results)
 
@@ -120,11 +123,18 @@ def group_folder_batch(
         genius_access_token=genius_access_token,
         log_func=lyric_report_lines.append,
     )
+    lyric_results = transcribe_unmatched_tracks(
+        copy_results,
+        lyric_results,
+        lyrics_mode=lyrics_mode,
+        log_func=lyric_report_lines.append,
+    )
     report_path = _write_group_mode_report(
         cluster_result=cluster_result,
         cluster_release_results=cluster_release_results,
         planned_files=planned_files,
         lyric_report_lines=lyric_report_lines,
+        output_root=output_root,
     )
 
     _print_final_summary(
@@ -425,8 +435,9 @@ def _write_group_mode_report(
     cluster_release_results: list[dict],
     planned_files: list[dict],
     lyric_report_lines: list[str],
+    output_root: Path,
 ) -> Path:
-    report_path = Path(DEFAULT_OUTPUT_ROOT) / "group_mode_report.txt"
+    report_path = output_root / "group_mode_report.txt"
     report_path.parent.mkdir(parents=True, exist_ok=True)
 
     report_lines: list[str] = []
