@@ -14,7 +14,12 @@
 
 
 import os
+import subprocess
 import sys
+import sysconfig
+import urllib.error
+import urllib.request
+import webbrowser
 from textwrap import dedent
 
 LYRICS_MODE_UNSYNCED = "lyrics-unsynced"
@@ -37,6 +42,8 @@ SUPPORTED_SPLIT_LYRICS_MODES = frozenset(
         SPLIT_LYRICS_MODE_TIMESTAMPED,
     }
 )
+DEFAULT_GUI_HOST = "127.0.0.1"
+DEFAULT_GUI_PORT = "8080"
 
 
 def print_help() -> None:
@@ -53,6 +60,7 @@ def print_help() -> None:
               analyse     Analyse one audio file or all audio files inside a folder for upscaling.
               group       Group analysed tracks from a folder.
               split       Run audio ML processing, such as stem separation and lyrics extraction.
+              gui         Open the local browser GUI.
               help        Show this help menu.
 
             ------------------------------------------------------------
@@ -153,14 +161,73 @@ def print_help() -> None:
         ).strip()
     )
 
+
+def launch_gui() -> None:
+    if _open_running_gui_if_available():
+        return
+
+    try:
+        from gui.app import run
+    except ModuleNotFoundError as exc:
+        if exc.name == "nicegui" and _relaunch_gui_with_regular_python():
+            return
+        raise
+
+    run()
+
+
+def _relaunch_gui_with_regular_python() -> bool:
+    if os.environ.get("AUDIO_ANALYZER_GUI_REEXEC") == "1":
+        return False
+    if sysconfig.get_config_var("Py_GIL_DISABLED") != 1:
+        return False
+
+    env = os.environ.copy()
+    env["AUDIO_ANALYZER_GUI_REEXEC"] = "1"
+    completed = subprocess.run(
+        ["py", "-3.14", *sys.argv],
+        env=env,
+        check=False,
+    )
+    if completed.returncode != 0:
+        print(
+            "GUI launch failed under regular Python 3.14. If this is a dependency issue, "
+            "install GUI dependencies with: py -3.14 -m pip install -r requirements-gui.txt"
+        )
+    return True
+
+
+def _open_running_gui_if_available() -> bool:
+    host = os.environ.get("AUDIO_ANALYZER_GUI_HOST", DEFAULT_GUI_HOST)
+    port = os.environ.get("AUDIO_ANALYZER_GUI_PORT", DEFAULT_GUI_PORT)
+    url = f"http://{host}:{port}/"
+
+    try:
+        with urllib.request.urlopen(url, timeout=1.0) as response:
+            if response.status >= 400:
+                return False
+    except (OSError, urllib.error.URLError):
+        return False
+
+    print(f"GUI already running at {url}")
+    webbrowser.open_new_tab(url)
+    return True
+
+
 def main():
     # 0. Set instructions and manuals
     if len(sys.argv) < 2:
         print("Wrong number of arguments - check usage using 'py main.py help'")
         return
 
-    elif sys.argv[1] == "help":
+    action = sys.argv[1].lower()
+
+    if action == "help":
         print_help()
+        return
+
+    if action == "gui":
+        launch_gui()
         return
 
     if len(sys.argv) < 3:
@@ -168,7 +235,6 @@ def main():
         return
 
     # 1. Get action and target path from command-line arguments and determine running mode
-    action = sys.argv[1].lower()
     lyrics_mode = LYRICS_MODE_NONE
 
     if action == "analyse":
