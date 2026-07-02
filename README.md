@@ -72,15 +72,27 @@ For audio splitting and lyrics transcription, processing happens locally on the 
 
 ## Requirements
 
-Python versions:
+Recommended Python runtimes:
 
-* [![Python 3.14t](https://img.shields.io/badge/Python-3.14t-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/downloads/release/python-3140/) - primary runtime used for the main CLI workflows, including audio analysis and metadata grouping/tagging
-* [![Python 3.11](https://img.shields.io/badge/Python-3.11-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/downloads/release/python-3110/) - runtime used for Demucs-based audio splitting and related local ML workflows
+* [![Python 3.14](https://img.shields.io/badge/Python-3.14-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/downloads/release/python-3140/) or [![Python 3.14t](https://img.shields.io/badge/Python-3.14t-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/downloads/release/python-3140/) - main workflow runtime for `analyse`, `group`, and `duplicates`, including the persistent cache-backed analysis and metadata workers
+* [![Python 3.11](https://img.shields.io/badge/Python-3.11-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/downloads/release/python-3110/) - runtime used for Demucs-based audio splitting, stem separation, and local lyrics transcription
+* [![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/downloads/) - non-free-threaded runtime recommended for the NiceGUI browser interface (`gui`)
+
+Dependency files:
+
+* `requirements-main.txt` - main CLI dependencies for audio analysis, metadata grouping/tagging, duplicate detection, caching, and duplicate cleanup
+* `requirements-demucs.txt` - Demucs and audio ML dependencies for the `split` workflow
+* `requirements-gui.txt` - NiceGUI dependency set for the browser UI
 
 External utilities:
 
 * [![FFmpeg](https://img.shields.io/badge/FFmpeg-007808?style=for-the-badge&logo=ffmpeg&logoColor=white)](https://ffmpeg.org/) - required for audio decoding, conversion support, and spectrogram generation. Place it inside the project's `tools` folder (<a href="https://github.com/oop7/ffmpeg-install-guide"><strong>installation guide here»</strong></a>)
 * [![Chromaprint / fpcalc](https://img.shields.io/badge/Chromaprint%20%2F%20fpcalc-4B5563?style=for-the-badge)](https://acoustid.org/chromaprint) - required for AcoustID fingerprint generation during metadata identification and grouping. Place it inside the project's `tools` folder (<a href="https://acoustid.org/chromaprint"><strong>installation guide here»</strong></a>)
+
+Runtime/storage notes:
+
+* The persistent cache uses SQLite and is created automatically on first use. No separate database server is required.
+* The default cache database path is `src/caching_and_duplicate_detection/cache/audio_cache.sqlite3`.
 
 
 ---
@@ -89,7 +101,7 @@ External utilities:
 
 ## Installation
 
-Before running the project, install everything listed in the `Requirements` section first, including both Python runtimes, `FFmpeg`, and `fpcalc.exe`.
+Before running the project, install everything listed in the `Requirements` section first, including the Python runtimes, `FFmpeg`, and `fpcalc.exe`.
 
 To run it locally:
 
@@ -99,7 +111,36 @@ To run it locally:
 git clone https://github.com/Mandache-Eduard/flac-authenticator.git
 ```
 
-2. Create your local `.env` file for metadata tagging and lyrics-related workflows
+2. Create the recommended virtual environments and install the matching dependency sets
+
+Using the runtime folder names below is the easiest option because the workflow launcher auto-detects them.
+
+```powershell
+py -3.14 -m venv .venv-main-3.14
+.\.venv-main-3.14\Scripts\python.exe -m pip install -r requirements-main.txt
+
+py -3.11 -m venv .venv-demucs-3.11
+.\.venv-demucs-3.11\Scripts\python.exe -m pip install -r requirements-demucs.txt
+
+py -3.11 -m venv .venv-gui
+.\.venv-gui\Scripts\python.exe -m pip install -r requirements-gui.txt
+```
+
+Notes:
+
+* `analyse`, `group`, and `duplicates` use the main workflow runtime.
+* `split` currently reads its worker interpreter from `src/config.py`, which points to `.venv-demucs-3.11\Scripts\python.exe`.
+* `gui` needs `nicegui` in a non-free-threaded interpreter. A dedicated `.venv-gui` is optional, but it keeps the GUI runtime separate and predictable.
+
+3. Install the external tools in the project `tools` directory
+
+Expected paths:
+
+* `tools\ffmpeg\bin\ffmpeg.exe`
+* `tools\ffmpeg\bin\ffprobe.exe`
+* `tools\fpcalc.exe`
+
+4. Create your local `.env` file for metadata tagging and lyrics-related workflows
 
 Use `.env.example` as the template and create a `.env` file in the project root with the same variables:
 
@@ -111,7 +152,7 @@ MUSICBRAINZ_APP_VERSION=0.1.0
 MUSICBRAINZ_CONTACT_EMAIL=
 ```
 
-3. Fill in the `.env` values
+5. Fill in the `.env` values
 
 `ACOUSTID_API_KEY`
 Use the **Application API key** from [AcoustID My Applications](https://acoustid.org/my-applications) for this program.
@@ -132,13 +173,15 @@ Set this to a valid contact email for your MusicBrainz client identification. Mu
 
 The metadata tagging workflow depends on the `.env` configuration above. The other local workflows still require the installed runtime dependencies from `Requirements`.
 
+The persistent cache database and duplicate cleanup manifest folder are created automatically when those workflows run for the first time.
+
 ---
 
 <!-- USAGE EXAMPLES -->
 
 ## Usage
 
-The CLI currently exposes three main workflows: `analyse`, `group`, and `split`.
+The project currently exposes five entry points: `analyse`, `group`, `duplicates`, `split`, and `gui`.
 
 ### General command format
 
@@ -152,12 +195,29 @@ Use this to show the built-in help menu:
 py src/main.py help
 ```
 
-### Analyse audio quality
+### Browser GUI
 
-Use `analyse` to scan a single FLAC file or an entire folder and estimate whether the audio appears genuinely lossless or upscaled.
+Use `gui` to open the local browser interface for the current workflows.
 
 ```sh
-py src/main.py analyse "<file-or-folder-path>"
+py src/main.py gui
+```
+
+The GUI currently provides:
+
+* audio analysis
+* duplicate detection
+* metadata tagging and album grouping
+* stem splitting and lyrics transcription
+
+It starts on `http://127.0.0.1:8080/` by default and automatically searches for the next free port if `8080` is already in use.
+
+### Analyse audio quality
+
+Use `analyse` to scan a single FLAC file or an entire folder and estimate whether the audio appears genuinely lossless or upscaled. This workflow now supports persistent cache reuse for repeated runs.
+
+```sh
+py src/main.py analyse [--refresh-cache] [--no-cache] [--cache-db <path>] "<file-or-folder-path>"
 ```
 
 Examples:
@@ -165,14 +225,44 @@ Examples:
 ```sh
 py src/main.py analyse "X:\path\to\file.flac"
 py src/main.py analyse "X:\path\to\folder"
+py src/main.py analyse --refresh-cache "X:\path\to\folder"
+py src/main.py analyse --cache-db "C:\path\to\audio_cache.sqlite3" "X:\path\to\folder"
 ```
+
+Outputs:
+
+* single-file mode prints the result and, for likely upscaled files, attempts to write a `.jpeg` spectrogram beside the source file
+* folder mode writes a timestamped CSV report in the scanned folder and generates spectrograms in `<folder>\spectrograms`
+
+### Detect duplicates
+
+Use `duplicates` to scan a folder for exact binary duplicates and cross-format duplicate candidates using hashes, fingerprints, AcoustID matches, and MusicBrainz identifiers.
+
+```sh
+py src/main.py duplicates [--refresh-cache] [--no-cache] [--cache-db <path>] [--output <path>] [--cleanup] "<folder-path>"
+```
+
+Examples:
+
+```sh
+py src/main.py duplicates "X:\path\to\folder"
+py src/main.py duplicates --output "X:\path\to\duplicates_report.csv" "X:\path\to\folder"
+py src/main.py duplicates --refresh-cache "X:\path\to\folder"
+py src/main.py duplicates --cleanup "X:\path\to\folder"
+```
+
+Notes:
+
+* `--output` writes the duplicate report to CSV.
+* `--cleanup` builds a cleanup plan, requires confirmation, and only attempts automatic cleanup for exact binary duplicate groups before moving eligible files to the Recycle Bin.
+* Cleanup runs also write a manifest under `src/caching_and_duplicate_detection/cache/cleanup_manifests`.
 
 ### Group releases and write metadata
 
-Use `group` to scan a folder, resolve identifiers, group tracks into releases, enrich metadata, and optionally write lyrics into the output files.
+Use `group` to scan a folder, resolve identifiers, group tracks into releases, enrich metadata, and optionally write lyrics into the output files. This workflow also reuses the persistent cache unless you disable it for the run.
 
 ```sh
-py src/main.py group [lyrics-mode] "<folder-path>"
+py src/main.py group [--refresh-cache] [--no-cache] [--cache-db <path>] [lyrics-mode] "<folder-path>"
 ```
 
 Supported lyrics modes:
@@ -188,7 +278,13 @@ py src/main.py group "X:\path\to\folder"
 py src/main.py group lyrics-none "X:\path\to\folder"
 py src/main.py group lyrics-unsynced "X:\path\to\folder"
 py src/main.py group lyrics-synced "X:\path\to\folder"
+py src/main.py group --refresh-cache lyrics-synced "X:\path\to\folder"
 ```
+
+Outputs:
+
+* grouped/tagged files are written into `<folder>\sorted_files`
+* the workflow report is written to `<folder>\sorted_files\group_mode_report.txt`
 
 ### Split audio and transcribe lyrics
 
@@ -214,7 +310,7 @@ py src/main.py split --outputs lyrics --lyrics-mode timestamped --language ro "X
 py src/main.py split --outputs vocals,instrumental "X:\path\to\file.flac"
 ```
 
-Audio ML results are saved in the configured audio workflow output directory.
+Audio ML results are written to `<input-folder>\split_files\<track-name>`, together with a `report.json` file for that run.
 
 ### Recommended local models
 
@@ -225,6 +321,14 @@ My current personal model recommendations for the split workflow are:
 * Bass - `htdemucs_ft`
 * Drums - `htdemucs_ft`
 * Lyrics transcription - `ggml-large-v2`, `ggml-large-v3`, `ggml-large-v3-turbo`
+
+### Cache controls
+
+The `analyse`, `group`, and `duplicates` workflows share the same cache options:
+
+* `--refresh-cache` - recompute cached rows for the current run
+* `--no-cache` - bypass the persistent SQLite cache entirely
+* `--cache-db <path>` - use a custom SQLite cache database instead of the default project cache
 
 ### Path handling
 
@@ -251,15 +355,12 @@ py src/main.py analyse X:\Music Folder\song.flac
 ### Future features
 
 * \[ ] Expand the program to do AI-generated audio detection.
-* \[ ] Implement metadata caching so already enriched audio files do not need to be looked up again unless the user explicitly requests a refresh
 * \[ ] Implement different checks for audio files origin (audio artifacts, checksums, metadata etc.)
 
 ### Features in development
 
 * \[ ] Improve the FLAC upscaling and lossless detection algorithm for more accurate verification results
 * \[ ] Integrate the Discogs API for album and track lookup as a fallback when MusicBrainz does not return a result
-* \[ ] Create a UI for ease of use
-  * \[ ] Rewrite program for multithreading (1 thread for UI, 1 thread for file processing)
 * \[ ] Provide both dark and light themes
 * \[ ] Create a better installation experience
 
@@ -270,6 +371,10 @@ py src/main.py analyse X:\Music Folder\song.flac
 
 * \[X] Implement FFmpeg spectrogram creation for low-confidence files
 * \[X] Save verification results in a more detailed log file (.CSV)
+* \[X] Add a persistent SQLite cache for audio analysis results, fingerprints, metadata resolution, and duplicate workflow reuse
+* \[X] Add duplicate detection for exact binary matches and cross-format perceptual candidates
+* \[X] Add duplicate cleanup planning, Recycle Bin moves for cleanup-eligible exact duplicates, and cleanup manifests
+* \[X] Add a NiceGUI browser interface for analyse, duplicates, metadata grouping, and split workflows
 * \[X] Add file recognition using:
   * \[X] metadata lookup based on MBID
   * \[X] AcoustID lookup and fingerprint generation
