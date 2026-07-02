@@ -10,3 +10,7 @@
 /tools/ffmpeg/bin
 /.venv-demucs-3.11
 /models
+src/caching_and_duplicate_detection/cache/*.sqlite3
+src/caching_and_duplicate_detection/cache/*.sqlite3-shm
+src/caching_and_duplicate_detection/cache/*.sqlite3-wal
+src/caching_and_duplicate_detection/cache/cleanup_manifests/*.json

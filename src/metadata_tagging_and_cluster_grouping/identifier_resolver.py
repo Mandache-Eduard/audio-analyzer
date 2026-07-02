@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any, Iterable
 
+from caching_and_duplicate_detection.audio_cache import AudioCache
+from caching_and_duplicate_detection.cache_models import RESOLVER_VERSION
 from metadata_tagging_and_cluster_grouping.fingerprint import FingerprintResult
 from metadata_tagging_and_cluster_grouping.tag_reader import ExistingAudioMetadata
 
@@ -12,6 +14,9 @@ def resolve_identifier(
     acoustid_client: Any,
     fingerprint_service: Any,
     precomputed_fingerprints_by_path: dict[str, FingerprintResult | Exception] | None = None,
+    cache: AudioCache | None = None,
+    refresh_cache: bool = False,
+    resolver_version: str = RESOLVER_VERSION,
 ) -> dict[str, Any]:
     """
     Decide how to identify one audio file.
@@ -23,6 +28,38 @@ def resolve_identifier(
     4. New Chromaprint fingerprint + AcoustID lookup
     """
 
+    file_id = None
+    if cache is not None:
+        file_id = cache.upsert_file(
+            existing_metadata.original_path,
+            audio_info=_existing_metadata_audio_info(existing_metadata),
+        )
+        if file_id is not None and not refresh_cache:
+            cached_result = cache.get_cached_metadata_resolution(file_id, resolver_version)
+            if cached_result is not None:
+                cached_result["original_path"] = str(existing_metadata.original_path)
+                return cached_result
+
+    resolution_result = _resolve_identifier_uncached(
+        existing_metadata,
+        musicbrainz_client,
+        acoustid_client,
+        fingerprint_service,
+        precomputed_fingerprints_by_path=precomputed_fingerprints_by_path,
+    )
+    if cache is not None and file_id is not None:
+        cache.save_metadata_resolution(file_id, resolver_version, resolution_result)
+        _save_fingerprint_lookup_cache(cache, file_id, resolution_result)
+    return resolution_result
+
+
+def _resolve_identifier_uncached(
+    existing_metadata: ExistingAudioMetadata,
+    musicbrainz_client: Any,
+    acoustid_client: Any,
+    fingerprint_service: Any,
+    precomputed_fingerprints_by_path: dict[str, FingerprintResult | Exception] | None = None,
+) -> dict[str, Any]:
     if existing_metadata.musicbrainz_recording_id:
         return _resolve_by_existing_mbid(existing_metadata, musicbrainz_client)
 
@@ -62,6 +99,9 @@ def resolve_identifier_batch(
     acoustid_client: Any,
     fingerprint_service: Any,
     precomputed_fingerprints_by_path: dict[str, FingerprintResult | Exception] | None = None,
+    cache: AudioCache | None = None,
+    refresh_cache: bool = False,
+    resolver_version: str = RESOLVER_VERSION,
 ) -> list[dict[str, Any]]:
     return [
         resolve_identifier(
@@ -70,6 +110,9 @@ def resolve_identifier_batch(
             acoustid_client=acoustid_client,
             fingerprint_service=fingerprint_service,
             precomputed_fingerprints_by_path=precomputed_fingerprints_by_path,
+            cache=cache,
+            refresh_cache=refresh_cache,
+            resolver_version=resolver_version,
         )
         for metadata_row in metadata_rows
     ]
@@ -81,6 +124,9 @@ def demo_resolve_identifier_batch(
     acoustid_client: Any,
     fingerprint_service: Any,
     precomputed_fingerprints_by_path: dict[str, FingerprintResult | Exception] | None = None,
+    cache: AudioCache | None = None,
+    refresh_cache: bool = False,
+    resolver_version: str = RESOLVER_VERSION,
 ) -> list[dict[str, Any]]:
     resolution_rows = resolve_identifier_batch(
         metadata_rows=metadata_rows,
@@ -88,6 +134,9 @@ def demo_resolve_identifier_batch(
         acoustid_client=acoustid_client,
         fingerprint_service=fingerprint_service,
         precomputed_fingerprints_by_path=precomputed_fingerprints_by_path,
+        cache=cache,
+        refresh_cache=refresh_cache,
+        resolver_version=resolver_version,
     )
 
     for resolution in resolution_rows:
@@ -252,6 +301,7 @@ def _resolve_by_existing_acoustid(
         candidate_release_group_mbids=candidate_release_group_mbids,
         result=result,
         error=_format_acoustid_error(result) if status == "error" else release_lookup_error,
+        acoustid_score=_extract_acoustid_score(acoustid_client, result),
     )
 
 
@@ -406,6 +456,7 @@ def _resolve_by_fingerprint_result(
         result=result,
         error=_format_acoustid_error(result) if status == "error" else release_lookup_error,
         acoustid_id=_extract_acoustid_identifier(acoustid_client, result),
+        acoustid_score=_extract_acoustid_score(acoustid_client, result),
     )
 
 
@@ -421,6 +472,7 @@ def _build_result(
     error: str | None,
     candidate_release_group_mbids: list[str] | None = None,
     acoustid_id: str | None = None,
+    acoustid_score: float | None = None,
 ) -> dict[str, Any]:
     return {
         "status": status,
@@ -437,6 +489,7 @@ def _build_result(
         "result": result,
         "raw_result": result,
         "error": error,
+        "acoustid_score": acoustid_score,
     }
 
 
@@ -518,6 +571,32 @@ def _extract_acoustid_identifier(acoustid_client: Any, result: Any) -> str | Non
     if callable(extractor):
         return extractor(result)
     return None
+
+
+def _extract_acoustid_score(acoustid_client: Any, result: Any) -> float | None:
+    extractor = getattr(acoustid_client, "extract_acoustid_score", None)
+    if callable(extractor):
+        return extractor(result)
+    return None
+
+
+def _save_fingerprint_lookup_cache(
+    cache: AudioCache,
+    file_id: int,
+    resolution_result: dict[str, Any],
+) -> None:
+    if resolution_result.get("source") != "fingerprint_acoustid":
+        return
+
+    raw_lookup_result = resolution_result.get("raw_result")
+    lookup_json = raw_lookup_result if isinstance(raw_lookup_result, dict) else None
+
+    cache.save_fingerprint_lookup(
+        file_id,
+        acoustid_id=_normalize_optional_string(resolution_result.get("acoustid_id")),
+        acoustid_score=_coerce_float(resolution_result.get("acoustid_score")),
+        lookup_json=lookup_json,
+    )
 
 def _extract_acoustid_release_mbids(acoustid_client: Any, result: Any) -> list[str]:
     extractor = getattr(acoustid_client, "extract_release_mbids", None)
@@ -604,3 +683,32 @@ def _deduplicate_strings(values: Iterable[str]) -> list[str]:
         ordered_values.append(cleaned_value)
 
     return ordered_values
+
+
+def _existing_metadata_audio_info(existing_metadata: ExistingAudioMetadata) -> dict[str, Any]:
+    return {
+        "extension": existing_metadata.extension,
+        "duration_seconds": existing_metadata.duration_seconds,
+        "codec": existing_metadata.codec,
+        "bitrate_bps": existing_metadata.bitrate_bps,
+        "sample_rate_hz": existing_metadata.sample_rate_hz,
+        "channels": existing_metadata.channels,
+        "bits_per_sample": existing_metadata.bits_per_sample,
+    }
+
+
+def _normalize_optional_string(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+
+    normalized_value = value.strip()
+    return normalized_value or None
+
+
+def _coerce_float(value: Any) -> float | None:
+    try:
+        if value is None:
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None

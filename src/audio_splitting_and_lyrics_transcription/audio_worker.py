@@ -36,6 +36,7 @@ MODELS_ROOT = PROJECT_ROOT / "models"
 AUDIO_SEPARATOR_MODELS_ROOT = MODELS_ROOT / "audio-separator"
 WHISPER_MODELS_ROOT = MODELS_ROOT / "whisper"
 WHISPER_CPP_ROOT = MODELS_ROOT / "whisper.cpp"
+AUDIO_ML_PYTHON_PATH = PROJECT_ROOT / ".venv-demucs-3.11" / "Scripts" / "python.exe"
 AUDIO_SEPARATOR_EXE_PATH = PROJECT_ROOT / ".venv-demucs-3.11" / "Scripts" / "audio-separator.exe"
 WHISPER_CPP_CPU_CLI_PATH = WHISPER_CPP_ROOT / "v1.8.6" / "Release" / "whisper-cli.exe"
 WHISPER_CPP_CUDA_CLI_PATH = WHISPER_CPP_ROOT / "v1.8.6-cublas-12.4.0" / "Release" / "whisper-cli.exe"
@@ -44,6 +45,7 @@ INSTRUMENTAL_MODEL_FILENAME = "MDX23C-8KFFT-InstVoc_HQ.ckpt"
 BASS_DRUMS_MODEL_FILENAME = "htdemucs_ft.yaml"
 LOCAL_WHISPER_MODEL_FILENAME = "ggml-large-v2.bin"
 PROGRESS_PREFIX = "__SPLIT_PROGRESS__ "
+AUDIO_SEPARATOR_ENTRYPOINT = "from audio_separator.utils.cli import main; main()"
 
 
 def main() -> int:
@@ -272,14 +274,35 @@ def _validate_runtime(input_file: str, requested_outputs: list[str]) -> None:
         raise FileNotFoundError(f"Model folder does not exist: {MODELS_ROOT}")
     if not AUDIO_SEPARATOR_MODELS_ROOT.is_dir():
         raise FileNotFoundError(f"Audio-separator model folder does not exist: {AUDIO_SEPARATOR_MODELS_ROOT}")
-    if ("vocals" in requested_outputs or "instrumental" in requested_outputs or "lyrics" in requested_outputs) and not AUDIO_SEPARATOR_EXE_PATH.is_file():
-        raise FileNotFoundError(f"audio-separator executable was not found at: {AUDIO_SEPARATOR_EXE_PATH}")
+    if "vocals" in requested_outputs or "instrumental" in requested_outputs or "lyrics" in requested_outputs:
+        _validate_audio_separator_runtime()
     if "lyrics" in requested_outputs:
         if not WHISPER_MODELS_ROOT.is_dir():
             raise FileNotFoundError(f"Whisper model folder does not exist: {WHISPER_MODELS_ROOT}")
         _resolve_whispercpp_runtime(requested_device="auto")
         _resolve_local_whisper_model_path()
     _probe_audio(input_path)
+
+
+def _validate_audio_separator_runtime() -> None:
+    if not AUDIO_ML_PYTHON_PATH.is_file():
+        raise FileNotFoundError(f"Audio ML Python interpreter was not found at: {AUDIO_ML_PYTHON_PATH}")
+
+    probe_code = (
+        "import importlib.util; "
+        "raise SystemExit(0 if importlib.util.find_spec('audio_separator.utils.cli') else 1)"
+    )
+    result = subprocess.run(
+        [str(AUDIO_ML_PYTHON_PATH), "-c", probe_code],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise FileNotFoundError(
+            "audio-separator CLI is not installed in the Audio ML runtime: "
+            f"{AUDIO_ML_PYTHON_PATH}"
+        )
 
 
 def _probe_audio(input_path: Path) -> None:
@@ -332,7 +355,9 @@ def _run_audio_separator(
     single_stem: str | None = None,
 ) -> dict[str, Path]:
     command = [
-        str(AUDIO_SEPARATOR_EXE_PATH),
+        str(AUDIO_ML_PYTHON_PATH),
+        "-c",
+        AUDIO_SEPARATOR_ENTRYPOINT,
         str(input_path),
         "--model_filename",
         model_filename,
@@ -375,7 +400,7 @@ def _find_audio_separator_outputs(output_root: Path) -> dict[str, Path]:
         "piano",
     )
     outputs: dict[str, Path] = {}
-    for path in sorted(output_root.glob("*.flac")):
+    for path in sorted(output_root.rglob("*.flac")):
         normalized_name = path.stem.lower()
         for stem in supported_stems:
             if f"({stem})" in normalized_name:

@@ -1055,10 +1055,7 @@ def _validate_local_transcription_runtime(model_name: str) -> None:
         raise FileNotFoundError(f"Local FFmpeg was not found at: {audio_worker.FFMPEG_PATH}")
     if not audio_worker.FFPROBE_PATH.is_file():
         raise FileNotFoundError(f"Local FFprobe was not found at: {audio_worker.FFPROBE_PATH}")
-    if not audio_worker.AUDIO_SEPARATOR_EXE_PATH.is_file():
-        raise FileNotFoundError(
-            f"audio-separator executable was not found at: {audio_worker.AUDIO_SEPARATOR_EXE_PATH}"
-        )
+    audio_worker._validate_audio_separator_runtime()
     if not audio_worker.AUDIO_SEPARATOR_MODELS_ROOT.is_dir():
         raise FileNotFoundError(
             f"Audio-separator model folder does not exist: {audio_worker.AUDIO_SEPARATOR_MODELS_ROOT}"

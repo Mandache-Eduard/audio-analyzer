@@ -8,13 +8,48 @@ from mutagen import File as MutagenFile
 
 from metadata_tagging_and_cluster_grouping.file_scanner import ScannedAudioFile
 
+DISPLAY_TITLE_ALIASES = (
+    "title",
+    "tracktitle",
+    "tit2",
+    "nam",
+)
+DISPLAY_ARTIST_ALIASES = (
+    "artist",
+    "artists",
+    "tpe1",
+    "author",
+    "art",
+    "albumartist",
+    "albumartists",
+    "aart",
+)
+DISPLAY_ALBUM_ALIASES = (
+    "album",
+    "albumtitle",
+    "talb",
+    "alb",
+)
+NON_DISPLAY_TAG_MARKERS = (
+    "id",
+    "mbid",
+    "musicbrainz",
+    "sort",
+    "fingerprint",
+    "acoustid",
+)
+
 @dataclass(frozen=True, slots=True)
 class ExistingAudioMetadata:
     original_path: Path
     extension: str
     file_size: int
     duration_seconds: float | None
+    title: str | None
+    artist: str | None
+    album: str | None
     musicbrainz_recording_id: str | None
+    release_mbid: str | None
     isrc: str | None
     acoustid_id: str | None
     codec: str | None
@@ -40,6 +75,9 @@ def read_existing_metadata(scanned_file: ScannedAudioFile) -> ExistingAudioMetad
             getattr(info, "length", None),
             fallback=scanned_file.duration_seconds,
         ),
+        title=_find_first_display_text_value(tags, aliases=DISPLAY_TITLE_ALIASES),
+        artist=_find_first_display_text_value(tags, aliases=DISPLAY_ARTIST_ALIASES),
+        album=_find_first_display_text_value(tags, aliases=DISPLAY_ALBUM_ALIASES),
         musicbrainz_recording_id=_find_first_identifier(
             tags,
             exact_aliases=[
@@ -48,6 +86,11 @@ def read_existing_metadata(scanned_file: ScannedAudioFile) -> ExistingAudioMetad
                 "ufidhttpmusicbrainzorg",
             ],
             contains_aliases=["musicbrainzrecordingid", "musicbrainztrackid"],
+        ),
+        release_mbid=_find_first_identifier(
+            tags,
+            exact_aliases=["musicbrainzalbumid"],
+            contains_aliases=["musicbrainzalbumid"],
         ),
         isrc=_find_first_identifier(
             tags,
@@ -136,6 +179,17 @@ def _find_first_identifier(
     exact_aliases: Iterable[str],
     contains_aliases: Iterable[str],
 ) -> str | None:
+    return _find_first_text_value(
+        tags,
+        exact_aliases=exact_aliases,
+        contains_aliases=contains_aliases,
+    )
+
+def _find_first_text_value(
+    tags: dict[str, list[str]],
+    exact_aliases: Iterable[str],
+    contains_aliases: Iterable[str],
+) -> str | None:
     normalized_entries = [
         (_normalize_tag_key(key), _clean_string_values(values))
         for key, values in tags.items()
@@ -153,8 +207,38 @@ def _find_first_identifier(
 
     return None
 
+
+def _find_first_display_text_value(
+    tags: dict[str, list[str]],
+    *,
+    aliases: Iterable[str],
+) -> str | None:
+    normalized_entries = [
+        (_normalize_tag_key(key), _clean_string_values(values))
+        for key, values in tags.items()
+    ]
+
+    for alias in aliases:
+        normalized_alias = _normalize_tag_key(alias)
+        for normalized_key, values in normalized_entries:
+            if normalized_key != normalized_alias:
+                continue
+            if not _is_allowed_display_tag_key(normalized_key):
+                continue
+            if values:
+                return values[0]
+
+    return None
+
 def _normalize_tag_key(key: str) -> str:
     return "".join(character for character in key.lower() if character.isalnum())
+
+
+def _is_allowed_display_tag_key(normalized_key: str) -> bool:
+    if normalized_key in {"artist", "artists", "albumartist", "albumartists"}:
+        return True
+
+    return not any(marker in normalized_key for marker in NON_DISPLAY_TAG_MARKERS)
 
 def _clean_string_values(values: Iterable[str]) -> list[str]:
     cleaned_values: list[str] = []

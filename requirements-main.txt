@@ -5,6 +5,7 @@ matplotlib
 mutagen
 python-dotenv
 lyricsgenius
+send2trash
 
 tqdm
 beautifulsoup4

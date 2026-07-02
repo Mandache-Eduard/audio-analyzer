@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 import threading
 import time
 from typing import Any
@@ -18,6 +19,16 @@ ACOUSTID_LOOKUP_META = [
 ]
 ACOUSTID_LOOKUP_META_VALUE = " ".join(ACOUSTID_LOOKUP_META)
 ACOUSTID_REQUEST_TIMEOUT_SECONDS = 30
+
+
+@dataclass(frozen=True, slots=True)
+class AcoustIdCandidate:
+    acoustid_id: str
+    score: float | None
+    recording_mbids: list[str]
+    release_mbids: list[str]
+    release_group_mbids: list[str]
+    result_index: int
 
 
 class AcoustIdClient:
@@ -93,22 +104,93 @@ class AcoustIdClient:
             raise RuntimeError(f"{error_context}: returned invalid JSON.") from exc
 
     def extract_recording_mbids(self, result: Any) -> list[str]:
-        collected_mbids: list[str] = []
-        _collect_recording_mbids(result, collected_mbids)
-        return _deduplicate_strings(collected_mbids)
+        chosen_candidate = self.extract_chosen_candidate(result)
+        if chosen_candidate is None:
+            return []
+        return list(chosen_candidate.recording_mbids)
 
     def extract_release_mbids(self, result: Any) -> list[str]:
-        collected_mbids: list[str] = []
-        _collect_child_ids(result, key="releases", collected_ids=collected_mbids)
-        return _deduplicate_strings(collected_mbids)
+        chosen_candidate = self.extract_chosen_candidate(result)
+        if chosen_candidate is None:
+            return []
+        return list(chosen_candidate.release_mbids)
 
     def extract_release_group_mbids(self, result: Any) -> list[str]:
-        collected_mbids: list[str] = []
-        _collect_child_ids(result, key="releasegroups", collected_ids=collected_mbids)
-        return _deduplicate_strings(collected_mbids)
+        chosen_candidate = self.extract_chosen_candidate(result)
+        if chosen_candidate is None:
+            return []
+        return list(chosen_candidate.release_group_mbids)
 
     def extract_acoustid_id(self, result: Any) -> str | None:
-        return _extract_acoustid_id(result)
+        chosen_candidate = self.extract_chosen_candidate(result)
+        if chosen_candidate is None:
+            return None
+        return chosen_candidate.acoustid_id
+
+    def extract_acoustid_score(self, result: Any) -> float | None:
+        chosen_candidate = self.extract_chosen_candidate(result)
+        if chosen_candidate is None:
+            return None
+        return chosen_candidate.score
+
+    def extract_chosen_candidate(self, result: Any) -> AcoustIdCandidate | None:
+        candidates = self.extract_candidates(result)
+        if not candidates:
+            return None
+
+        # Keep low-score AcoustID matches available, but consistently prefer the
+        # highest-scoring candidate when binding the chosen ID to its metadata.
+        return min(
+            candidates,
+            key=lambda candidate: (
+                -_score_sort_key(candidate.score),
+                -int(bool(candidate.recording_mbids)),
+                -int(bool(candidate.release_mbids or candidate.release_group_mbids)),
+                candidate.result_index,
+                candidate.acoustid_id,
+            ),
+        )
+
+    def extract_candidates(self, result: Any) -> list[AcoustIdCandidate]:
+        if not isinstance(result, dict):
+            return []
+
+        raw_results = result.get("results")
+        if not isinstance(raw_results, list):
+            return []
+
+        candidates: list[AcoustIdCandidate] = []
+        for result_index, raw_candidate in enumerate(raw_results):
+            if not isinstance(raw_candidate, dict):
+                continue
+
+            acoustid_id = raw_candidate.get("id")
+            if not isinstance(acoustid_id, str) or not acoustid_id.strip():
+                continue
+
+            recording_mbids: list[str] = []
+            _collect_recording_mbids(raw_candidate, recording_mbids)
+            release_mbids: list[str] = []
+            _collect_child_ids(raw_candidate, key="releases", collected_ids=release_mbids)
+            release_group_mbids: list[str] = []
+            _collect_child_ids(
+                raw_candidate,
+                key="releasegroups",
+                collected_ids=release_group_mbids,
+            )
+
+            candidates.append(
+                AcoustIdCandidate(
+                    acoustid_id=acoustid_id.strip(),
+                    score=_coerce_score(raw_candidate.get("score")),
+                    recording_mbids=_deduplicate_strings(recording_mbids),
+                    release_mbids=_deduplicate_strings(release_mbids),
+                    release_group_mbids=_deduplicate_strings(release_group_mbids),
+                    result_index=result_index,
+                )
+            )
+
+        return candidates
 
 
 class _SimpleRateLimiter:
@@ -184,24 +266,14 @@ def _deduplicate_strings(values: list[str]) -> list[str]:
 
     return ordered_values
 
+def _coerce_score(value: Any) -> float | None:
+    try:
+        if value is None:
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
-def _extract_acoustid_id(result: Any) -> str | None:
-    if isinstance(result, dict):
-        for key in ("acoustid_id", "acoustid", "id", "track_id", "trackid"):
-            value = result.get(key)
-            if isinstance(value, str) and value.strip():
-                return value.strip()
 
-        for nested_value in result.values():
-            if isinstance(nested_value, (dict, list, tuple)):
-                extracted = _extract_acoustid_id(nested_value)
-                if extracted:
-                    return extracted
-
-    if isinstance(result, (list, tuple)):
-        for item in result:
-            extracted = _extract_acoustid_id(item)
-            if extracted:
-                return extracted
-
-    return None
+def _score_sort_key(score: float | None) -> float:
+    return score if score is not None else -1.0

@@ -1,6 +1,8 @@
 from collections import Counter
 from pathlib import Path
 
+from caching_and_duplicate_detection.audio_cache import AudioCache
+from caching_and_duplicate_detection.cache_models import RESOLVER_VERSION
 from config import (
     ACOUSTID_API_KEY,
     GENIUS_ACCESS_TOKEN,
@@ -44,6 +46,8 @@ def group_folder_batch(
     fingerprint_service,
     lyrics_mode: str = LYRICS_MODE_NONE,
     genius_access_token: str | None = GENIUS_ACCESS_TOKEN,
+    cache: AudioCache | None = None,
+    refresh_cache: bool = False,
 ):
     output_root = Path(folder_path) / DEFAULT_OUTPUT_ROOT
 
@@ -68,6 +72,11 @@ def group_folder_batch(
         if not metadata_row.musicbrainz_recording_id
         and not metadata_row.isrc
         and not metadata_row.acoustid_id
+        and not _has_cached_metadata_resolution(
+            metadata_row,
+            cache=cache,
+            refresh_cache=refresh_cache,
+        )
     ]
     precomputed_fingerprints_by_path = (
         fingerprint_service.create_fingerprint_batch(
@@ -84,6 +93,8 @@ def group_folder_batch(
             acoustid_client=acoustid_client,
             fingerprint_service=fingerprint_service,
             precomputed_fingerprints_by_path=precomputed_fingerprints_by_path,
+            cache=cache,
+            refresh_cache=refresh_cache,
         )
         for metadata_row in tqdm(metadata_rows, desc="Identifiers resolved", unit="file")
     ]
@@ -168,7 +179,11 @@ def group_folder_batch(
     }
 
 
-def build_group_mode_services():
+def build_group_mode_services(
+    *,
+    cache: AudioCache | None = None,
+    refresh_cache: bool = False,
+):
     missing_variables: list[str] = []
 
     if not ACOUSTID_API_KEY:
@@ -194,7 +209,7 @@ def build_group_mode_services():
             contact_email=MUSICBRAINZ_CONTACT_EMAIL,
         ),
         AcoustIdClient(api_key=ACOUSTID_API_KEY),
-        FingerprintService(),
+        FingerprintService(cache=cache, refresh_cache=refresh_cache),
     )
 
 
@@ -501,3 +516,30 @@ def _print_error_details(title: str, error_rows: list[dict]) -> None:
             print(f"            context: {context}")
         else:
             print(f"        {path}")
+
+
+def _has_cached_metadata_resolution(
+    metadata_row,
+    *,
+    cache: AudioCache | None,
+    refresh_cache: bool,
+) -> bool:
+    if cache is None or refresh_cache:
+        return False
+
+    file_id = cache.upsert_file(
+        metadata_row.original_path,
+        audio_info={
+            "extension": metadata_row.extension,
+            "duration_seconds": metadata_row.duration_seconds,
+            "codec": metadata_row.codec,
+            "bitrate_bps": metadata_row.bitrate_bps,
+            "sample_rate_hz": metadata_row.sample_rate_hz,
+            "channels": metadata_row.channels,
+            "bits_per_sample": metadata_row.bits_per_sample,
+        },
+    )
+    if file_id is None:
+        return False
+
+    return cache.get_cached_metadata_resolution(file_id, RESOLVER_VERSION) is not None
