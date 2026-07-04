@@ -321,6 +321,7 @@ My current personal model recommendations for the split workflow are:
 * Bass - `htdemucs_ft`
 * Drums - `htdemucs_ft`
 * Lyrics transcription - `ggml-large-v2`, `ggml-large-v3`, `ggml-large-v3-turbo`
+For searching and downloading AI models, I recommend using [Hugging Face](https://huggingface.co/), as it provides a large collection of publicly available models.
 
 ### Cache controls
 
