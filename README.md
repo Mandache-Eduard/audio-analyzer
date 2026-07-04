@@ -74,7 +74,7 @@ For audio splitting and lyrics transcription, processing happens locally on the 
 
 Recommended Python runtimes:
 
-* [![Python 3.14](https://img.shields.io/badge/Python-3.14-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/downloads/release/python-3140/) or [![Python 3.14t](https://img.shields.io/badge/Python-3.14t-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/downloads/release/python-3140/) - main workflow runtime for `analyse`, `group`, and `duplicates`, including the persistent cache-backed analysis and metadata workers
+* [![Python 3.14t](https://img.shields.io/badge/Python-3.14t-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/downloads/release/python-3140/) - main workflow runtime for `analyse`, `group`, and `duplicates`, including the persistent cache-backed analysis and metadata workers
 * [![Python 3.11](https://img.shields.io/badge/Python-3.11-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/downloads/release/python-3110/) - runtime used for Demucs-based audio splitting, stem separation, and local lyrics transcription
 * [![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/downloads/) - non-free-threaded runtime recommended for the NiceGUI browser interface (`gui`)
 
@@ -354,7 +354,7 @@ py src/main.py analyse X:\Music Folder\song.flac
 
 ### Future features
 
-* \[ ] Expand the program to do AI-generated audio detection.
+* \[ ] Expand the program to do AI-generated note detection.
 * \[ ] Implement different checks for audio files origin (audio artifacts, checksums, metadata etc.)
 
 ### Features in development
