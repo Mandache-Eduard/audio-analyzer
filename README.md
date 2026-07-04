@@ -1,10 +1,10 @@
 <!-- PROJECT LOGO -->
 
-<br />
-<div align="center">
+<!--<br />
+ <div align="center"> 
   <a href="https://github.com/Mandache-Eduard/flac-authenticator">
     <img src="images/audio\\\_analyzer\\\_project\\\_picture.jpg" alt="Logo" width="450" height="450">
-  </a>
+  </a>-->
 
 <h3 align="center">Audio Analyzer</h3>
 
